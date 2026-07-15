@@ -1,0 +1,20 @@
+# Secrets & session — NEVER commit these
+.env
+session.json
+*.session
+
+# Cached follower/following data (contains your account graph)
+cache/
+*.cache.json
+
+# Reports
+reports/
+non_followers_*.csv
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+.DS_Store
