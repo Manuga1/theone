@@ -30,6 +30,7 @@ from pathlib import Path
 try:
     from instagrapi import Client
     from instagrapi.exceptions import (
+        BadPassword,
         ChallengeRequired,
         LoginRequired,
         TwoFactorRequired,
@@ -104,25 +105,50 @@ def human_delay(min_s, max_s):
 # Login (with session reuse + 2FA / challenge handling)
 # ---------------------------------------------------------------------------
 def login():
-    """Return an authenticated instagrapi Client, reusing a saved session."""
-    username, password = get_credentials()
+    """
+    Return an authenticated instagrapi Client.
+
+    Order of preference:
+      1. A previously saved session (session.json).
+      2. A browser session cookie (IG_SESSIONID) — most reliable, avoids the
+         'new device' login block Instagram throws at username/password logins.
+      3. Username + password (least reliable; Instagram often rejects it as a
+         suspicious new-device login).
+    """
     cl = Client()
     cl.delay_range = [1, 3]  # small built-in delay between API calls
+    sessionid = os.environ.get("IG_SESSIONID", "").strip()
 
-    # 1) Try to reuse a saved session (avoids repeated login challenges).
+    # 1) Reuse a saved session if we have one and it's still alive.
     if SESSION_FILE.exists():
         try:
             cl.load_settings(SESSION_FILE)
-            cl.login(username, password)
             cl.get_timeline_feed()  # cheap call to verify the session is alive
             print("Logged in using saved session.")
             return cl
-        except (LoginRequired, Exception):
+        except Exception:
             print("Saved session expired — logging in fresh.")
             cl = Client()
             cl.delay_range = [1, 3]
 
-    # 2) Fresh login.
+    # 2) Preferred path: log in with a browser session cookie.
+    if sessionid:
+        try:
+            cl.login_by_sessionid(sessionid)
+            cl.dump_settings(SESSION_FILE)
+            print("Logged in via browser session cookie. Saved for next time.")
+            return cl
+        except Exception as e:  # noqa: BLE001
+            sys.exit(
+                f"\nSession-cookie login failed: {e}\n"
+                "The sessionid is probably wrong or expired. Grab a fresh one:\n"
+                "  1. Log into instagram.com in your browser.\n"
+                "  2. Copy the 'sessionid' cookie value (see the README).\n"
+                "  3. Put it in .env as IG_SESSIONID=...\n"
+            )
+
+    # 3) Fallback: username + password.
+    username, password = get_credentials()
     try:
         cl.login(username, password)
     except TwoFactorRequired:
@@ -134,6 +160,15 @@ def login():
             "Instagram app (or check your email), then run this script again."
         )
         sys.exit(1)
+    except BadPassword:
+        sys.exit(
+            "\nInstagram rejected the username/password login.\n"
+            "This usually is NOT your password — Instagram blocks logins from\n"
+            "unrecognized 'devices'. Use the browser-cookie method instead:\n"
+            "  1. Log into instagram.com in your browser.\n"
+            "  2. Copy the 'sessionid' cookie value (see the README).\n"
+            "  3. Put it in .env as IG_SESSIONID=... and run this again.\n"
+        )
 
     cl.dump_settings(SESSION_FILE)
     print("Logged in and saved session for next time.")

@@ -122,6 +122,47 @@ my_best_friend
 
 ---
 
+## Logging in with a session cookie (recommended)
+
+Instagram frequently blocks username/password logins from scripts, treating
+them as suspicious "new device" logins (you'll see a `BadPassword` / 400 error
+even when the password is correct). The reliable way around this is to log in
+through your browser — which Instagram trusts — and hand the script the
+resulting session cookie.
+
+**How to get your `sessionid`:**
+
+1. In **Chrome** (or Safari/Firefox) on your computer, go to
+   [instagram.com](https://www.instagram.com) and log in normally.
+2. Open the developer tools:
+   - **Chrome:** View → Developer → Developer Tools, then click the
+     **Application** tab.
+   - **Safari:** enable Develop menu (Settings → Advanced → "Show Develop menu"),
+     then Develop → Show Web Inspector → **Storage** tab.
+3. In the left sidebar, expand **Cookies** → click **https://www.instagram.com**.
+4. Find the row named **`sessionid`** and copy its **Value** (a long string like
+   `71234567%3AAbCdEf...`).
+5. Put it in your `.env` file:
+
+   ```
+   IG_SESSIONID=paste_the_value_here
+   ```
+
+6. Run the script as normal:
+
+   ```bash
+   python unfollowers.py list
+   ```
+
+That's it — no password needed, and no new-device block. The session is cached
+locally so you only do this occasionally (re-grab a fresh `sessionid` if you get
+logged out).
+
+> Keep your `sessionid` private — anyone with it can access your account. It
+> lives only in your git-ignored `.env` file.
+
+---
+
 ## Two-factor auth & security challenges
 
 - **2FA on:** the script will prompt for your one-time code.
