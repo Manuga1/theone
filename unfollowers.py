@@ -52,6 +52,7 @@ CACHE_DIR = ROOT / "cache"
 REPORTS_DIR = ROOT / "reports"
 WHITELIST_FILE = ROOT / "whitelist.txt"
 ENV_FILE = ROOT / ".env"
+DECISIONS_FILE = ROOT / "decisions.csv"  # your keep/unfollow choices + progress
 
 # Safety defaults for the unfollow flow.
 DEFAULT_MAX_UNFOLLOWS = 50      # hard cap per run
@@ -255,6 +256,182 @@ def print_list(non_followers):
 
 
 # ---------------------------------------------------------------------------
+# Decisions (review -> apply workflow)
+# ---------------------------------------------------------------------------
+DECISION_FIELDS = ["user_id", "username", "decision", "applied", "updated_at"]
+
+
+def latest_report():
+    """Most recent non_followers CSV, or None."""
+    reports = sorted(REPORTS_DIR.glob("non_followers_*.csv"))
+    return reports[-1] if reports else None
+
+
+def load_decisions():
+    """Return an ordered dict: user_id -> row dict."""
+    from collections import OrderedDict
+    decisions = OrderedDict()
+    if DECISIONS_FILE.exists():
+        with DECISIONS_FILE.open(newline="") as f:
+            for row in csv.DictReader(f):
+                decisions[row["user_id"]] = row
+    return decisions
+
+
+def save_decisions(decisions):
+    with DECISIONS_FILE.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=DECISION_FIELDS)
+        writer.writeheader()
+        for row in decisions.values():
+            writer.writerow(row)
+
+
+def summarize_decisions(decisions):
+    keep = sum(1 for r in decisions.values() if r["decision"] == "keep")
+    unfollow = sum(1 for r in decisions.values() if r["decision"] == "unfollow")
+    done = sum(1 for r in decisions.values()
+               if r["decision"] == "unfollow" and r.get("applied") == "yes")
+    print(f"\nDecisions so far: {keep} keep, {unfollow} to unfollow "
+          f"({done} already unfollowed, {unfollow - done} pending).")
+
+
+def cmd_review(args):
+    """Go through the list fast, marking each account keep or unfollow."""
+    report = latest_report()
+    if not report:
+        sys.exit("No list found yet. Run this first:\n    python unfollowers.py list")
+
+    candidates = []
+    with report.open(newline="") as f:
+        for row in csv.DictReader(f):
+            candidates.append((row["user_id"], row["username"]))
+
+    decisions = load_decisions()
+    todo = [(uid, un) for uid, un in candidates
+            if args.redo or uid not in decisions]
+
+    if not todo:
+        print("Every account already has a decision.")
+        summarize_decisions(decisions)
+        print("\nNext: run  python unfollowers.py apply --confirm")
+        return
+
+    print("=" * 64)
+    print(f"Reviewing {len(todo)} accounts (source: {report.name})")
+    print("For EACH account, press one key then Enter:")
+    print("   y = KEEP  (do NOT unfollow)")
+    print("   n = UNFOLLOW")
+    print("   s = skip for now")
+    print("   q = save and quit")
+    print("Your answers are saved instantly — quit and resume anytime.")
+    print("=" * 64)
+
+    now = datetime.now().isoformat(timespec="seconds")
+    i = 0
+    while i < len(todo):
+        uid, un = todo[i]
+        ans = input(f"[{i + 1}/{len(todo)}] @{un}  ->  y=keep / n=unfollow / s=skip / q=quit: ").strip().lower()
+        if ans == "q":
+            print("Saved. Resume later with the same command.")
+            break
+        if ans == "s":
+            i += 1
+            continue
+        if ans == "y":
+            decision = "keep"
+        elif ans == "n":
+            decision = "unfollow"
+        else:
+            print("   (didn't catch that — use y, n, s, or q)")
+            continue
+        decisions[uid] = {
+            "user_id": uid, "username": un, "decision": decision,
+            "applied": decisions.get(uid, {}).get("applied", "no"),
+            "updated_at": now,
+        }
+        save_decisions(decisions)
+        i += 1
+
+    summarize_decisions(decisions)
+    print("\nWhen you're ready to unfollow, run:")
+    print("    python unfollowers.py apply --confirm")
+
+
+def cmd_apply(args):
+    """Unfollow everyone marked 'unfollow' in decisions.csv, slowly and safely."""
+    decisions = load_decisions()
+    if not decisions:
+        sys.exit("No decisions found. Run this first:\n    python unfollowers.py review")
+
+    pending = [r for r in decisions.values()
+               if r["decision"] == "unfollow" and r.get("applied") != "yes"]
+    if not pending:
+        print("Nothing left to unfollow — all marked accounts are done. 🎉")
+        return
+
+    targets = pending[: args.limit]
+    dry_run = not args.confirm
+
+    print("=" * 64)
+    print(f"{'DRY RUN — nothing will change.' if dry_run else 'LIVE — these accounts WILL be unfollowed.'}")
+    print(f"Pending total: {len(pending)}  |  This run: {len(targets)} (cap {args.limit})")
+    print(f"Delay between unfollows: {args.min_delay}-{args.max_delay}s, "
+          f"with a {args.long_pause}s pause every {LONG_PAUSE_EVERY}.")
+    print("=" * 64)
+
+    cl = login() if not dry_run else None
+    now_fn = lambda: datetime.now().isoformat(timespec="seconds")
+    done = failed = 0
+
+    for i, row in enumerate(targets, 1):
+        uid, un = row["user_id"], row["username"]
+        prefix = f"[{i}/{len(targets)}]"
+
+        if dry_run:
+            print(f"{prefix} [dry] would unfollow @{un}")
+            done += 1
+            continue
+
+        try:
+            cl.user_unfollow(uid)
+            row["applied"] = "yes"
+            row["updated_at"] = now_fn()
+            decisions[uid] = row
+            save_decisions(decisions)
+            done += 1
+            print(f"{prefix} ✓ unfollowed @{un}   ({done} this run)", flush=True)
+        except Exception as e:  # noqa: BLE001
+            msg = str(e).lower()
+            row["applied"] = "failed"
+            row["updated_at"] = now_fn()
+            decisions[uid] = row
+            save_decisions(decisions)
+            failed += 1
+            print(f"{prefix} ✗ @{un}: {e}", flush=True)
+            if any(s in msg for s in
+                   ("feedback_required", "rate", "wait", "429",
+                    "login_required", "challenge", "checkpoint")):
+                print("\n⚠️  Instagram is rate-limiting or the session died. "
+                      "Stopping now to protect your account.", flush=True)
+                break
+
+        if i < len(targets):
+            if done and done % LONG_PAUSE_EVERY == 0:
+                print(f"   ...long pause {args.long_pause}s", flush=True)
+                time.sleep(args.long_pause)
+            else:
+                human_delay(args.min_delay, args.max_delay)
+
+    verb = "would be unfollowed" if dry_run else "unfollowed"
+    remaining = len([r for r in decisions.values()
+                     if r["decision"] == "unfollow" and r.get("applied") != "yes"])
+    print("\n" + "-" * 64)
+    print(f"Done this run: {done} {verb}, {failed} failed. {remaining} still pending.")
+    if not dry_run and remaining:
+        print("Run the same command again (a fresh cookie may be needed) to continue.")
+
+
+# ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
 def cmd_list(args):
@@ -398,6 +575,46 @@ def build_parser():
         help=f"Max seconds between unfollows (default {DEFAULT_MAX_DELAY}).",
     )
     p_unf.set_defaults(func=cmd_unfollow)
+
+    # review: mark keep/unfollow for the whole list, fast and offline.
+    p_rev = sub.add_parser(
+        "review",
+        help="Go through the list marking each account keep (y) or unfollow (n). "
+             "Saves your answers to decisions.csv.",
+    )
+    p_rev.add_argument(
+        "--redo", action="store_true",
+        help="Re-review accounts you've already decided on (start over).",
+    )
+    p_rev.set_defaults(func=cmd_review)
+
+    # apply: execute the unfollows you marked, slowly. Good for background runs.
+    p_app = sub.add_parser(
+        "apply",
+        help="Unfollow everyone you marked 'unfollow' during review. "
+             "Dry run unless --confirm. Resumable; safe to run in the background.",
+    )
+    p_app.add_argument(
+        "--confirm", action="store_true",
+        help="Actually unfollow. Without this it's a DRY RUN.",
+    )
+    p_app.add_argument(
+        "--limit", type=int, default=150,
+        help="Max unfollows this run (default 150 — a sane nightly ceiling).",
+    )
+    p_app.add_argument(
+        "--min-delay", type=float, default=30,
+        help="Min seconds between unfollows (default 30).",
+    )
+    p_app.add_argument(
+        "--max-delay", type=float, default=60,
+        help="Max seconds between unfollows (default 60).",
+    )
+    p_app.add_argument(
+        "--long-pause", type=float, default=300,
+        help=f"Seconds to pause every {LONG_PAUSE_EVERY} unfollows (default 300).",
+    )
+    p_app.set_defaults(func=cmd_apply)
     return p
 
 

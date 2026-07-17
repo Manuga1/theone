@@ -7,9 +7,11 @@ session.json
 cache/
 *.cache.json
 
-# Reports
+# Reports & decisions (contain your account graph)
 reports/
 non_followers_*.csv
+decisions.csv
+apply.log
 
 # Python
 __pycache__/
