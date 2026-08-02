@@ -1,0 +1,141 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>clip permutator</title>
+<style>
+  body { font-family: monospace; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+  fieldset { margin-bottom: 1rem; }
+  table { border-collapse: collapse; width: 100%; }
+  td, th { text-align: left; padding: 2px 8px; border-bottom: 1px solid #ccc; }
+  #count { font-weight: bold; }
+  #outputs a { display: block; }
+  button { cursor: pointer; }
+</style>
+</head>
+<body>
+<h1>clip permutator</h1>
+
+<fieldset>
+  <legend>1. clips</legend>
+  <input type="file" id="files" multiple accept="video/*">
+  <button onclick="upload()">upload</button>
+  <span id="upstatus"></span>
+  <table id="cliptable">
+    <thead><tr><th></th><th>name</th><th>len (s)</th><th>res</th><th></th></tr></thead>
+    <tbody></tbody>
+  </table>
+</fieldset>
+
+<fieldset>
+  <legend>2. settings</legend>
+  clips per video (k): <input type="number" id="k" value="2" min="1" style="width:4em">
+  &nbsp; seconds per clip: <input type="number" id="duration" value="3" min="0.1" step="0.1" style="width:5em">
+  <br><br>
+  trim from:
+  <label><input type="radio" name="style" value="start" checked> start</label>
+  <label><input type="radio" name="style" value="center"> center</label>
+  <label><input type="radio" name="style" value="random"> random window</label>
+  <br><br>
+  <span id="count"></span>
+</fieldset>
+
+<fieldset>
+  <legend>3. generate</legend>
+  <button onclick="generate()">generate</button>
+  <span id="progress"></span>
+  <div id="outputs"></div>
+</fieldset>
+
+<script>
+let clips = [];
+
+function selected() {
+  return [...document.querySelectorAll('.clipcheck:checked')].map(c => c.value);
+}
+
+function perms(n, k) {
+  if (k > n || k < 1) return 0;
+  let c = 1;
+  for (let i = 0; i < k; i++) c *= n - i;
+  return c;
+}
+
+function updateCount() {
+  const n = selected().length;
+  const k = +document.getElementById('k').value;
+  const p = perms(n, k);
+  document.getElementById('count').textContent =
+    n ? `${n} clips selected, k=${k} → ${p} output videos` : '';
+}
+
+async function refreshClips() {
+  clips = await (await fetch('/clips')).json();
+  const tbody = document.querySelector('#cliptable tbody');
+  tbody.innerHTML = '';
+  for (const c of clips) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td><input type="checkbox" class="clipcheck" value="${c.name}" checked></td>` +
+      `<td>${c.name}</td><td>${c.duration}</td><td>${c.resolution}</td>` +
+      `<td><button data-del="${c.name}">x</button></td>`;
+    tbody.appendChild(tr);
+  }
+  tbody.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+    await fetch('/delete', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({name: b.dataset.del})});
+    refreshClips();
+  });
+  tbody.querySelectorAll('.clipcheck').forEach(c => c.onchange = updateCount);
+  updateCount();
+}
+
+async function upload() {
+  const files = document.getElementById('files').files;
+  if (!files.length) return;
+  const fd = new FormData();
+  for (const f of files) fd.append('videos', f);
+  document.getElementById('upstatus').textContent = 'uploading...';
+  await fetch('/upload', {method: 'POST', body: fd});
+  document.getElementById('upstatus').textContent = 'done';
+  refreshClips();
+}
+
+async function generate(confirmed) {
+  const body = {
+    clips: selected(),
+    k: +document.getElementById('k').value,
+    duration: +document.getElementById('duration').value,
+    trim_style: document.querySelector('input[name=style]:checked').value,
+    confirm: !!confirmed,
+  };
+  const res = await fetch('/generate', {method: 'POST',
+    headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  const data = await res.json();
+  if (data.needs_confirm) {
+    if (confirm(`This will generate ${data.count} videos. Continue?`)) generate(true);
+    return;
+  }
+  if (data.error) { document.getElementById('progress').textContent = data.error; return; }
+  document.getElementById('outputs').innerHTML = '';
+  poll(data.run_id);
+}
+
+async function poll(runId) {
+  const job = await (await fetch('/progress/' + runId)).json();
+  document.getElementById('progress').textContent =
+    `${job.phase} ${job.done}/${job.total}` + (job.error ? ` — ${job.error}` : '');
+  if (!job.finished) { setTimeout(() => poll(runId), 1000); return; }
+  const div = document.getElementById('outputs');
+  for (const name of job.outputs) {
+    const a = document.createElement('a');
+    a.href = `/outputs/${runId}/${name}`;
+    a.textContent = name;
+    div.appendChild(a);
+  }
+}
+
+document.getElementById('k').oninput = updateCount;
+refreshClips();
+</script>
+</body>
+</html>
