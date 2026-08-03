@@ -483,6 +483,13 @@ async function poll(runId) {
     `${job.phase} ${job.done}/${job.total}` + (job.error ? ` — ${job.error}` : '');
   if (!job.finished) { setTimeout(() => poll(runId), 1000); return; }
   const div = document.getElementById('outputs');
+  if (job.outputs.length) {
+    const all = document.createElement('a');
+    all.href = `/outputs/${runId}/all.zip`;
+    all.textContent = `⬇ download all ${job.outputs.length} videos (zip)`;
+    all.style.fontWeight = 'bold';
+    div.appendChild(all);
+  }
   for (const name of job.outputs) {
     const a = document.createElement('a');
     a.href = `/outputs/${runId}/${name}`;

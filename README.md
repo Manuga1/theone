@@ -51,7 +51,8 @@ Open http://localhost:5000.
    n), keeping concat a stream copy; clips shorter than the window shift
    later captions slightly. Fonts are bundled in `fonts/`.
 5. Generate. Outputs land in `workspace/run-<id>/output/` and are linked in
-   the page when done.
+   the page when done, along with a "download all" link that fetches the
+   whole run as one zip (unzips into a `run-<id>/` folder).
 
 ## How it works
 

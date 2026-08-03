@@ -6,9 +6,11 @@ Run: python app.py  ->  http://localhost:5000
 import threading
 import time
 import uuid
+import zipfile
 from pathlib import Path
 
-from flask import Flask, abort, jsonify, render_template, request, send_from_directory
+from flask import (Flask, abort, jsonify, render_template, request, send_file,
+                   send_from_directory)
 from werkzeug.utils import secure_filename
 
 import captions
@@ -245,6 +247,28 @@ def progress(run_id):
     if not job:
         abort(404)
     return jsonify(job)
+
+
+@app.route("/outputs/<run_id>/all.zip")
+def outputs_zip(run_id):
+    rid = secure_filename(run_id)
+    out_dir = WORKSPACE / f"run-{rid}" / "output"
+    files = sorted(f for f in out_dir.iterdir() if f.is_file()) \
+        if out_dir.is_dir() else []
+    if not files:
+        abort(404)
+    # cache the zip next to the outputs; stored (uncompressed) since mp4
+    # doesn't compress and this keeps it fast
+    zip_path = WORKSPACE / f"run-{rid}" / "all.zip"
+    if (not zip_path.is_file()
+            or zip_path.stat().st_mtime < max(f.stat().st_mtime for f in files)):
+        tmp = zip_path.with_suffix(".zip.part")
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_STORED) as z:
+            for f in files:
+                z.write(f, arcname=f"run-{rid}/{f.name}")
+        tmp.replace(zip_path)
+    return send_file(zip_path, as_attachment=True,
+                     download_name=f"clips-{rid}.zip")
 
 
 @app.route("/outputs/<run_id>/<path:filename>")
