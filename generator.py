@@ -147,6 +147,7 @@ def overlay_music(video, music_paths, dst):
         "duration=first:dropout_transition=0:normalize=0[a]",
         "-map", "0:v", "-map", "[a]",
         "-c:v", "copy", "-c:a", "aac", "-ar", "44100", "-ac", "2",
+        "-movflags", "+faststart",
         "-shortest", str(dst),
     ]
     _run(cmd)
@@ -157,7 +158,8 @@ def concat(trimmed_paths, dst, list_path):
     Path(list_path).write_text(lines)
     _run([
         "ffmpeg", "-y", "-f", "concat", "-safe", "0",
-        "-i", str(list_path), "-c", "copy", str(dst),
+        "-i", str(list_path), "-c", "copy",
+        "-movflags", "+faststart", str(dst),
     ])
 
 

@@ -25,10 +25,11 @@ Open http://localhost:5000.
    part of the clip gets used (click a track to preview that segment).
    The "position windows" buttons are presets: all at start / centered /
    randomized.
-2. Set k (clips per output), seconds per clip, and the output size:
-   "auto" letterboxes everything onto a frame fitting all clips; the
-   vertical 1080×1920 modes target Instagram/phone — "crop to fill" (the
-   social-standard look) or "letterbox".
+2. Set k (clips per output), seconds per clip, and the output size.
+   The default — vertical 1080×1920, crop to fill — is exactly what
+   Instagram shows fullscreen; anything else appears boxed in the feed.
+   "Letterbox" keeps landscape clips whole (with bars); "auto" fits a
+   frame to all clips. Outputs are faststart-packaged mp4s.
 3. Audio: optionally upload music tracks — every checked track is layered
    over every output. Each track has its own timeline window: drag it to
    move, drag its edges to resize, so only that part of the track is used;
