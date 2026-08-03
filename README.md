@@ -23,10 +23,10 @@ Open http://localhost:5000.
    The "position windows" buttons are presets: all at start / centered /
    randomized.
 2. Set k (clips per output) and seconds per clip.
-3. Audio: optionally upload one music track to overlay on every output
-   (looped if shorter than the video). The ♪ checkbox per clip keeps or
-   drops that clip's own sound; "mute all clip audio" silences every clip
-   (music, if enabled, still plays).
+3. Audio: optionally upload music tracks — every checked track is layered
+   over every output (each looped if shorter than the video). The ♪
+   checkbox per clip keeps or drops that clip's own sound; "mute all clip
+   audio" silences every clip (checked tracks still play).
 4. Generate. Outputs land in `workspace/run-<id>/output/` and are linked in
    the page when done.
 
@@ -35,8 +35,9 @@ Open http://localhost:5000.
 Each clip is trimmed at its chosen offset and normalized once (common
 resolution with letterbox padding, 30 fps, H.264/AAC, silent audio injected
 if missing or muted), then every permutation is a stream-copy concat — so
-video encoding cost is O(n), not O(P(n,k)·k). With a music overlay, each
-output additionally gets a cheap audio-only mix pass (video still copied).
+video encoding cost is O(n), not O(P(n,k)·k). With music overlays, each
+output additionally gets a cheap audio-only mix pass (video still copied)
+that amixes all selected tracks with the concatenated clip audio.
 Runs above 500 outputs ask for confirmation; above 5000 are refused (edit
 `WARN_THRESHOLD` / `HARD_CAP` in `app.py`).
 

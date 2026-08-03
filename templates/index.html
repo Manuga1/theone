@@ -50,13 +50,12 @@
 
 <fieldset>
   <legend>3. audio</legend>
-  music overlay: <input type="file" id="musicfile" accept="audio/*">
+  music overlay: <input type="file" id="musicfile" accept="audio/*" multiple>
   <button onclick="uploadMusic()">upload</button>
-  <span id="musicstatus">none</span>
-  <button id="musicremove" onclick="removeMusic()" style="display:none">remove</button>
+  <span id="musicstatus"></span>
+  <div id="tracklist"></div>
+  <small>checked tracks are layered together over every output (looped to fit).</small>
   <br><br>
-  <label><input type="checkbox" id="usemusic"> overlay music on outputs</label>
-  &nbsp;
   <label><input type="checkbox" id="muteall"> mute all clip audio</label>
 </fieldset>
 
@@ -201,28 +200,41 @@ async function upload() {
   refreshClips();
 }
 
+const trackOn = {};          // name -> include in the overlay mix
+
 async function refreshMusic() {
   const m = await (await fetch('/music')).json();
-  document.getElementById('musicstatus').textContent =
-    m.name ? `${m.name} (${m.duration}s)` : 'none';
-  document.getElementById('musicremove').style.display = m.name ? '' : 'none';
-  if (!m.name) document.getElementById('usemusic').checked = false;
+  const list = document.getElementById('tracklist');
+  list.innerHTML = '';
+  for (const t of m.tracks) {
+    if (!(t.name in trackOn)) trackOn[t.name] = true;
+    const row = document.createElement('div');
+    row.innerHTML =
+      `<label><input type="checkbox" class="trackcheck" value="${t.name}" ${trackOn[t.name] ? 'checked' : ''}>` +
+      ` ${t.name} (${t.duration}s)</label> <button data-deltrack="${t.name}">x</button>`;
+    list.appendChild(row);
+    row.querySelector('.trackcheck').onchange = e => { trackOn[t.name] = e.target.checked; };
+    row.querySelector('[data-deltrack]').onclick = async () => {
+      await fetch('/music', {method: 'DELETE', headers: {'Content-Type': 'application/json'},
+                             body: JSON.stringify({name: t.name})});
+      refreshMusic();
+    };
+  }
+}
+
+function selectedTracks() {
+  return [...document.querySelectorAll('.trackcheck:checked')].map(c => c.value);
 }
 
 async function uploadMusic() {
-  const f = document.getElementById('musicfile').files[0];
-  if (!f) return;
+  const files = document.getElementById('musicfile').files;
+  if (!files.length) return;
   const fd = new FormData();
-  fd.append('audio', f);
+  for (const f of files) fd.append('audio', f);
   document.getElementById('musicstatus').textContent = 'uploading...';
   const res = await (await fetch('/music', {method: 'POST', body: fd})).json();
-  if (res.error) { document.getElementById('musicstatus').textContent = res.error; return; }
-  document.getElementById('usemusic').checked = true;
-  refreshMusic();
-}
-
-async function removeMusic() {
-  await fetch('/music', {method: 'DELETE'});
+  document.getElementById('musicstatus').textContent =
+    res.error || (res.errors && res.errors.length ? res.errors.join('; ') : '');
   refreshMusic();
 }
 
@@ -232,7 +244,7 @@ async function generate(confirmed) {
     clips: names.map(n => ({name: n, offset: offsets[n] || 0, audio: audioOn[n] ?? true})),
     k: +document.getElementById('k').value,
     duration: winDur(),
-    use_music: document.getElementById('usemusic').checked,
+    music: selectedTracks(),
     mute_all: document.getElementById('muteall').checked,
     confirm: !!confirmed,
   };

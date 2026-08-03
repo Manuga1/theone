@@ -94,19 +94,24 @@ def trim_normalize(src, dst, offset, duration, use_audio, target_res=DEFAULT_RES
     _run(cmd)
 
 
-def overlay_music(video, music, dst):
-    """Mix the music file over the video's audio; video stream is copied.
+def overlay_music(video, music_paths, dst):
+    """Mix one or more music files over the video's audio; video is copied.
 
-    The music is looped if shorter than the video and cut at the video's end.
+    Each track is looped if shorter than the video and cut at the video's end.
     """
-    _run([
-        "ffmpeg", "-y", "-i", str(video), "-stream_loop", "-1", "-i", str(music),
+    cmd = ["ffmpeg", "-y", "-i", str(video)]
+    for m in music_paths:
+        cmd += ["-stream_loop", "-1", "-i", str(m)]
+    inputs = "".join(f"[{i}:a]" for i in range(len(music_paths) + 1))
+    cmd += [
         "-filter_complex",
-        "[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]",
+        f"{inputs}amix=inputs={len(music_paths) + 1}:"
+        "duration=first:dropout_transition=0:normalize=0[a]",
         "-map", "0:v", "-map", "[a]",
         "-c:v", "copy", "-c:a", "aac", "-ar", "44100", "-ac", "2",
         "-shortest", str(dst),
-    ])
+    ]
+    _run(cmd)
 
 
 def concat(trimmed_paths, dst, list_path):
@@ -130,13 +135,13 @@ def count_permutations(n, k):
     return count
 
 
-def generate(run_dir, clips, k, duration, progress_cb=None, music_path=None):
+def generate(run_dir, clips, k, duration, progress_cb=None, music_paths=None):
     """Produce every ordered permutation of k clips as concatenated videos.
 
     clips: list of {"path": ..., "offset": seconds, "audio": bool} — offset is
     where the trimmed window starts in the source; audio=False silences that
-    clip's own sound. music_path, if given, is mixed over every output
-    (looped to fit).
+    clip's own sound. music_paths, if given, are all layered over every
+    output (each looped to fit).
     progress_cb(phase, done, total): optional progress reporting hook.
     Returns list of output file names.
     """
@@ -180,9 +185,9 @@ def generate(run_dir, clips, k, duration, progress_cb=None, music_path=None):
         name = f"{num:0{len(str(total))}d}_" + "-".join(
             _stem(paths[i]) for i in perm) + ".mp4"
         parts = [trimmed[i].resolve() for i in perm]
-        if music_path:
+        if music_paths:
             concat(parts, tmp_concat, list_path)
-            overlay_music(tmp_concat, music_path, output_dir / name)
+            overlay_music(tmp_concat, music_paths, output_dir / name)
         else:
             concat(parts, output_dir / name, list_path)
         outputs.append(name)

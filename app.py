@@ -77,37 +77,42 @@ def uploaded_clip(filename):
     return send_from_directory(UPLOADS, filename)
 
 
-def _current_music():
-    files = [f for f in MUSIC_DIR.iterdir() if f.is_file()] if MUSIC_DIR.is_dir() else []
-    return files[0] if files else None
-
-
 @app.route("/music", methods=["GET", "POST", "DELETE"])
 def music():
     if request.method == "POST":
-        f = request.files.get("audio")
-        name = secure_filename(f.filename) if f else ""
-        if not name:
-            return jsonify({"error": "no audio file"}), 400
-        for old in MUSIC_DIR.iterdir():  # only one music track at a time
-            old.unlink()
-        target = MUSIC_DIR / name
-        f.save(target)
-        try:
-            info = generator.probe_audio(target)
-        except generator.GenerationError as e:
-            target.unlink()
-            return jsonify({"error": str(e)}), 400
-        return jsonify({"name": name, "duration": round(info["duration"], 2)})
+        saved, errors = [], []
+        for f in request.files.getlist("audio"):
+            name = secure_filename(f.filename)
+            if not name:
+                continue
+            target = MUSIC_DIR / name
+            f.save(target)
+            try:
+                generator.probe_audio(target)
+                saved.append(name)
+            except generator.GenerationError as e:
+                target.unlink()
+                errors.append(str(e))
+        if not saved and errors:
+            return jsonify({"error": "; ".join(errors)}), 400
+        return jsonify({"saved": saved, "errors": errors})
     if request.method == "DELETE":
-        for old in MUSIC_DIR.iterdir():
-            old.unlink()
+        name = secure_filename((request.json or {}).get("name", ""))
+        targets = [MUSIC_DIR / name] if name else list(MUSIC_DIR.iterdir())
+        for t in targets:
+            if t.is_file():
+                t.unlink()
         return jsonify({"ok": True})
-    track = _current_music()
-    if not track:
-        return jsonify({"name": None})
-    info = generator.probe_audio(track)
-    return jsonify({"name": track.name, "duration": round(info["duration"], 2)})
+    tracks = []
+    for f in sorted(MUSIC_DIR.iterdir()):
+        if not f.is_file():
+            continue
+        try:
+            info = generator.probe_audio(f)
+        except generator.GenerationError:
+            continue
+        tracks.append({"name": f.name, "duration": round(info["duration"], 2)})
+    return jsonify({"tracks": tracks})
 
 
 @app.route("/generate", methods=["POST"])
@@ -123,7 +128,7 @@ def generate():
         })
     k = int(data.get("k", 0))
     duration = float(data.get("duration", 0))
-    music = _current_music() if data.get("use_music") else None
+    music = [MUSIC_DIR / secure_filename(n) for n in data.get("music", [])]
 
     if any(not c["path"].is_file() for c in clips):
         return jsonify({"error": "one or more selected clips no longer exist"}), 400
@@ -133,8 +138,8 @@ def generate():
         return jsonify({"error": f"k must be between 1 and {len(clips)}"}), 400
     if duration <= 0:
         return jsonify({"error": "clip duration must be positive"}), 400
-    if data.get("use_music") and not music:
-        return jsonify({"error": "music overlay requested but no music uploaded"}), 400
+    if any(not m.is_file() for m in music):
+        return jsonify({"error": "one or more selected music tracks no longer exist"}), 400
 
     total = generator.count_permutations(len(clips), k)
     if total > HARD_CAP:
@@ -160,7 +165,7 @@ def generate():
         try:
             outputs = generator.generate(WORKSPACE / f"run-{run_id}", clips, k,
                                          duration, progress_cb=progress,
-                                         music_path=music)
+                                         music_paths=music)
             jobs[run_id].update(outputs=outputs, finished=True, phase="done")
         except Exception as e:  # surface any failure to the UI
             jobs[run_id].update(error=str(e), finished=True, phase="error")
