@@ -31,6 +31,11 @@ def _run(cmd, timeout=600):
     return result.stdout
 
 
+def _quote_filter_path(path):
+    """Quote a path for use as an ffmpeg filter option value."""
+    return "'" + str(path).replace("'", r"'\''") + "'"
+
+
 def check_ffmpeg():
     for tool in ("ffmpeg", "ffprobe"):
         try:
@@ -83,7 +88,8 @@ def trim_normalize(src, dst, offset, duration, use_audio, target_res=DEFAULT_RES
         f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={TARGET_FPS}"
     )
     if ass_path:
-        vf += f",ass={ass_path}:fontsdir={captions.FONTS_DIR}"
+        vf += (f",ass=filename={_quote_filter_path(ass_path)}"
+               f":fontsdir={_quote_filter_path(captions.FONTS_DIR)}")
     cmd = ["ffmpeg", "-y", "-ss", f"{offset:.3f}", "-t", f"{duration:.3f}", "-i", str(src)]
     if not use_audio:
         cmd += ["-f", "lavfi", "-t", f"{duration:.3f}",
