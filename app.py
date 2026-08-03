@@ -154,6 +154,12 @@ def generate():
     caption_style = data.get("caption_style") or None
     if caption_style not in (None, "classic", "highlight", "boxed", "neon"):
         return jsonify({"error": "unknown caption style"}), 400
+    if caption_style and not generator.has_filter("ass"):
+        return jsonify({"error":
+            "your ffmpeg build has no subtitle (libass) support, so captions "
+            "can't be rendered. On macOS run `brew install ffmpeg`, then make "
+            "sure `which ffmpeg` points at the Homebrew binary "
+            "(/opt/homebrew/bin/ffmpeg) and restart the app."}), 400
     music = []
     for m in data.get("music", []):
         if isinstance(m, str):  # bare name = whole track

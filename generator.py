@@ -44,6 +44,18 @@ def check_ffmpeg():
             raise GenerationError(f"{tool} not found on PATH — install FFmpeg first")
 
 
+_filter_cache = {}
+
+
+def has_filter(name):
+    """Whether the ffmpeg on PATH was built with the given filter."""
+    if name not in _filter_cache:
+        result = subprocess.run(["ffmpeg", "-hide_banner", "-filters"],
+                                capture_output=True, text=True)
+        _filter_cache[name] = bool(re.search(rf"\s{name}\s", result.stdout))
+    return _filter_cache[name]
+
+
 def probe(path):
     """Return {duration, width, height, has_audio} for a video file."""
     out = _run([
