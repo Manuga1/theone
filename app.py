@@ -11,6 +11,7 @@ from pathlib import Path
 from flask import Flask, abort, jsonify, render_template, request, send_from_directory
 from werkzeug.utils import secure_filename
 
+import captions
 import generator
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -77,6 +78,19 @@ def uploaded_clip(filename):
     return send_from_directory(UPLOADS, filename)
 
 
+@app.route("/transcribe", methods=["POST"])
+def transcribe():
+    name = secure_filename(request.json.get("name", ""))
+    target = UPLOADS / name
+    if not target.is_file():
+        return jsonify({"error": f"{name} not found"}), 404
+    try:
+        result = captions.transcribe(target)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify(result)
+
+
 @app.route("/music/<path:filename>")
 def music_file(filename):
     return send_from_directory(MUSIC_DIR, filename)
@@ -126,13 +140,19 @@ def generate():
     clips = []
     for c in data.get("clips", []):
         name = secure_filename(c.get("name", ""))
+        cap = c.get("caption") or {}
         clips.append({
             "path": UPLOADS / name,
             "offset": max(float(c.get("offset", 0)), 0),
             "audio": bool(c.get("audio", True)) and not data.get("mute_all"),
+            "caption": {"text": str(cap.get("text", "")),
+                        "words": cap.get("words")},
         })
     k = int(data.get("k", 0))
     duration = float(data.get("duration", 0))
+    caption_style = data.get("caption_style") or None
+    if caption_style not in (None, "classic", "highlight", "boxed", "neon"):
+        return jsonify({"error": "unknown caption style"}), 400
     music = []
     for m in data.get("music", []):
         if isinstance(m, str):  # bare name = whole track
@@ -180,7 +200,8 @@ def generate():
         try:
             outputs = generator.generate(WORKSPACE / f"run-{run_id}", clips, k,
                                          duration, progress_cb=progress,
-                                         music_paths=music)
+                                         music_paths=music,
+                                         caption_style=caption_style)
             jobs[run_id].update(outputs=outputs, finished=True, phase="done")
         except Exception as e:  # surface any failure to the UI
             jobs[run_id].update(error=str(e), finished=True, phase="error")

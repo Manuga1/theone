@@ -12,6 +12,8 @@ import re
 import subprocess
 from pathlib import Path
 
+import captions
+
 TARGET_FPS = 30
 DEFAULT_RES = (1280, 720)
 
@@ -67,17 +69,21 @@ def probe_audio(path):
     return {"duration": float(info["format"]["duration"])}
 
 
-def trim_normalize(src, dst, offset, duration, use_audio, target_res=DEFAULT_RES):
+def trim_normalize(src, dst, offset, duration, use_audio, target_res=DEFAULT_RES,
+                   ass_path=None):
     """Trim src at offset for duration and re-encode to the uniform format.
 
     use_audio=False (or a source with no audio stream) gets a silent track so
     every intermediate has identical streams for stream-copy concat.
+    ass_path, if given, burns those subtitles in during the same encode.
     """
     w, h = target_res
     vf = (
         f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
         f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={TARGET_FPS}"
     )
+    if ass_path:
+        vf += f",ass={ass_path}:fontsdir={captions.FONTS_DIR}"
     cmd = ["ffmpeg", "-y", "-ss", f"{offset:.3f}", "-t", f"{duration:.3f}", "-i", str(src)]
     if not use_audio:
         cmd += ["-f", "lavfi", "-t", f"{duration:.3f}",
@@ -146,12 +152,15 @@ def count_permutations(n, k):
     return count
 
 
-def generate(run_dir, clips, k, duration, progress_cb=None, music_paths=None):
+def generate(run_dir, clips, k, duration, progress_cb=None, music_paths=None,
+             caption_style=None):
     """Produce every ordered permutation of k clips as concatenated videos.
 
-    clips: list of {"path": ..., "offset": seconds, "audio": bool} — offset is
-    where the trimmed window starts in the source; audio=False silences that
-    clip's own sound. music_paths entries are {"path": ..., "start": s,
+    clips: list of {"path": ..., "offset": seconds, "audio": bool,
+    "caption": {"text": str, "words": [...]|None}} — offset is where the
+    trimmed window starts in the source; audio=False silences that clip's
+    own sound; caption words (source-clip timings) or text are burned in
+    with caption_style. music_paths entries are {"path": ..., "start": s,
     "end": s|None} — each track is cut to its selection, then all are
     layered over every output, playing once (no looping).
     progress_cb(phase, done, total): optional progress reporting hook.
@@ -191,9 +200,19 @@ def generate(run_dir, clips, k, duration, progress_cb=None, music_paths=None):
         # clamp the window inside the clip; short clips are used in full
         offset = min(max(float(clip.get("offset", 0)), 0), max(clip_len - duration, 0))
         use_audio = info["has_audio"] and clip.get("audio", True)
+        window = min(duration, clip_len)
+        ass_path = None
+        cap = clip.get("caption") or {}
+        if caption_style and (cap.get("words") or cap.get("text", "").strip()):
+            words = (captions.slice_words(cap["words"], offset, window)
+                     if cap.get("words")
+                     else captions.words_from_text(cap["text"], window))
+            ass_path = captions.build_ass(
+                words, caption_style, target_res,
+                run_dir / f"cap_{idx:02d}.ass")
         dst = trimmed_dir / f"{idx:02d}_{_stem(clip['path'])}.mp4"
-        trim_normalize(clip["path"], dst, offset, min(duration, clip_len),
-                       use_audio, target_res)
+        trim_normalize(clip["path"], dst, offset, window,
+                       use_audio, target_res, ass_path=ass_path)
         trimmed.append(dst)
     if progress_cb:
         progress_cb("normalizing clips", len(clips), len(clips))

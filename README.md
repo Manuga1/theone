@@ -34,7 +34,17 @@ Open http://localhost:5000.
    The ♪ checkbox per clip keeps or drops that clip's own
    sound; "mute all clip audio" silences every clip (checked tracks still
    play).
-4. Generate. Outputs land in `workspace/run-<id>/output/` and are linked in
+4. Captions: pick a style (bold classic / word highlight / boxed / neon
+   glow) to reveal a caption box under each clip. Type text, or hit
+   "transcribe" to fill it from the clip's speech via a local Whisper model
+   (first use downloads ~150 MB; needs `faster-whisper` from
+   requirements.txt). Transcribed captions keep word-level timing — the
+   word-highlight style pops each word as it's spoken. Editing the text
+   drops the sync and spreads words evenly instead. Captions are burned
+   into each clip during normalization, so they follow the clip through
+   every permutation at no extra encoding cost (fonts are bundled in
+   `fonts/`).
+5. Generate. Outputs land in `workspace/run-<id>/output/` and are linked in
    the page when done.
 
 ## How it works
