@@ -16,7 +16,9 @@ import generator
 BASE_DIR = Path(__file__).resolve().parent
 WORKSPACE = BASE_DIR / "workspace"
 UPLOADS = WORKSPACE / "uploads"
+MUSIC_DIR = WORKSPACE / "music"
 UPLOADS.mkdir(parents=True, exist_ok=True)
+MUSIC_DIR.mkdir(parents=True, exist_ok=True)
 
 WARN_THRESHOLD = 500   # above this, the client must send confirm=true
 HARD_CAP = 5000        # above this, refuse outright
@@ -70,27 +72,71 @@ def delete():
     return jsonify({"ok": True})
 
 
+@app.route("/uploads/<path:filename>")
+def uploaded_clip(filename):
+    return send_from_directory(UPLOADS, filename)
+
+
+def _current_music():
+    files = [f for f in MUSIC_DIR.iterdir() if f.is_file()] if MUSIC_DIR.is_dir() else []
+    return files[0] if files else None
+
+
+@app.route("/music", methods=["GET", "POST", "DELETE"])
+def music():
+    if request.method == "POST":
+        f = request.files.get("audio")
+        name = secure_filename(f.filename) if f else ""
+        if not name:
+            return jsonify({"error": "no audio file"}), 400
+        for old in MUSIC_DIR.iterdir():  # only one music track at a time
+            old.unlink()
+        target = MUSIC_DIR / name
+        f.save(target)
+        try:
+            info = generator.probe_audio(target)
+        except generator.GenerationError as e:
+            target.unlink()
+            return jsonify({"error": str(e)}), 400
+        return jsonify({"name": name, "duration": round(info["duration"], 2)})
+    if request.method == "DELETE":
+        for old in MUSIC_DIR.iterdir():
+            old.unlink()
+        return jsonify({"ok": True})
+    track = _current_music()
+    if not track:
+        return jsonify({"name": None})
+    info = generator.probe_audio(track)
+    return jsonify({"name": track.name, "duration": round(info["duration"], 2)})
+
+
 @app.route("/generate", methods=["POST"])
 def generate():
     data = request.json
-    names = [secure_filename(n) for n in data.get("clips", [])]
-    paths = [UPLOADS / n for n in names]
+    clips = []
+    for c in data.get("clips", []):
+        name = secure_filename(c.get("name", ""))
+        clips.append({
+            "path": UPLOADS / name,
+            "offset": max(float(c.get("offset", 0)), 0),
+            "audio": bool(c.get("audio", True)) and not data.get("mute_all"),
+        })
     k = int(data.get("k", 0))
     duration = float(data.get("duration", 0))
-    style = data.get("trim_style", "start")
+    music = _current_music() if data.get("use_music") else None
 
-    if any(not p.is_file() for p in paths):
+    if any(not c["path"].is_file() for c in clips):
         return jsonify({"error": "one or more selected clips no longer exist"}), 400
-    if len(paths) < 1:
+    if len(clips) < 1:
         return jsonify({"error": "select at least one clip"}), 400
-    if not 1 <= k <= len(paths):
-        return jsonify({"error": f"k must be between 1 and {len(paths)}"}), 400
+    if not 1 <= k <= len(clips):
+        return jsonify({"error": f"k must be between 1 and {len(clips)}"}), 400
     if duration <= 0:
         return jsonify({"error": "clip duration must be positive"}), 400
-    if style not in ("start", "center", "random"):
-        return jsonify({"error": "trim_style must be start, center, or random"}), 400
+    if data.get("use_music") and not music:
+        return jsonify({"error": "music overlay requested but no music uploaded"}), 400
 
-    total = generator.count_permutations(len(paths), k)
+    total = generator.count_permutations(len(clips), k)
     if total > HARD_CAP:
         return jsonify({"error": f"{total} outputs exceeds the hard cap of {HARD_CAP}",
                         "count": total}), 409
@@ -112,8 +158,9 @@ def generate():
 
     def worker():
         try:
-            outputs = generator.generate(WORKSPACE / f"run-{run_id}", paths, k,
-                                         duration, style, progress_cb=progress)
+            outputs = generator.generate(WORKSPACE / f"run-{run_id}", clips, k,
+                                         duration, progress_cb=progress,
+                                         music_path=music)
             jobs[run_id].update(outputs=outputs, finished=True, phase="done")
         except Exception as e:  # surface any failure to the UI
             jobs[run_id].update(error=str(e), finished=True, phase="error")

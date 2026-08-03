@@ -8,7 +8,6 @@ cost is O(n) rather than O(P(n,k) * k).
 
 import itertools
 import json
-import random
 import re
 import subprocess
 from pathlib import Path
@@ -56,25 +55,31 @@ def probe(path):
     }
 
 
-def _trim_offset(clip_len, duration, style, rng):
-    if clip_len <= duration:
-        return 0.0
-    if style == "center":
-        return (clip_len - duration) / 2
-    if style == "random":
-        return rng.uniform(0, clip_len - duration)
-    return 0.0  # "start"
+def probe_audio(path):
+    """Return {duration} for an audio file (no video stream required)."""
+    out = _run([
+        "ffprobe", "-v", "error", "-print_format", "json",
+        "-show_format", "-show_streams", str(path),
+    ])
+    info = json.loads(out)
+    if not any(s["codec_type"] == "audio" for s in info["streams"]):
+        raise GenerationError(f"{Path(path).name}: no audio stream")
+    return {"duration": float(info["format"]["duration"])}
 
 
-def trim_normalize(src, dst, offset, duration, has_audio, target_res=DEFAULT_RES):
-    """Trim src at offset for duration and re-encode to the uniform format."""
+def trim_normalize(src, dst, offset, duration, use_audio, target_res=DEFAULT_RES):
+    """Trim src at offset for duration and re-encode to the uniform format.
+
+    use_audio=False (or a source with no audio stream) gets a silent track so
+    every intermediate has identical streams for stream-copy concat.
+    """
     w, h = target_res
     vf = (
         f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
         f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={TARGET_FPS}"
     )
     cmd = ["ffmpeg", "-y", "-ss", f"{offset:.3f}", "-t", f"{duration:.3f}", "-i", str(src)]
-    if not has_audio:
+    if not use_audio:
         cmd += ["-f", "lavfi", "-t", f"{duration:.3f}",
                 "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"]
     cmd += [
@@ -82,11 +87,26 @@ def trim_normalize(src, dst, offset, duration, has_audio, target_res=DEFAULT_RES
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
         "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-ar", "44100", "-ac", "2",
-        "-map", "0:v:0", "-map", "0:a:0" if has_audio else "1:a:0",
+        "-map", "0:v:0", "-map", "0:a:0" if use_audio else "1:a:0",
         "-video_track_timescale", "90000",
         "-shortest", str(dst),
     ]
     _run(cmd)
+
+
+def overlay_music(video, music, dst):
+    """Mix the music file over the video's audio; video stream is copied.
+
+    The music is looped if shorter than the video and cut at the video's end.
+    """
+    _run([
+        "ffmpeg", "-y", "-i", str(video), "-stream_loop", "-1", "-i", str(music),
+        "-filter_complex",
+        "[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]",
+        "-map", "0:v", "-map", "[a]",
+        "-c:v", "copy", "-c:a", "aac", "-ar", "44100", "-ac", "2",
+        "-shortest", str(dst),
+    ])
 
 
 def concat(trimmed_paths, dst, list_path):
@@ -110,10 +130,13 @@ def count_permutations(n, k):
     return count
 
 
-def generate(run_dir, clip_paths, k, duration, style, progress_cb=None, seed=None):
+def generate(run_dir, clips, k, duration, progress_cb=None, music_path=None):
     """Produce every ordered permutation of k clips as concatenated videos.
 
-    clip_paths: list of source video file paths.
+    clips: list of {"path": ..., "offset": seconds, "audio": bool} — offset is
+    where the trimmed window starts in the source; audio=False silences that
+    clip's own sound. music_path, if given, is mixed over every output
+    (looped to fit).
     progress_cb(phase, done, total): optional progress reporting hook.
     Returns list of output file names.
     """
@@ -122,9 +145,9 @@ def generate(run_dir, clip_paths, k, duration, style, progress_cb=None, seed=Non
     output_dir = run_dir / "output"
     trimmed_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
-    rng = random.Random(seed)
 
-    infos = [probe(p) for p in clip_paths]
+    paths = [c["path"] for c in clips]
+    infos = [probe(p) for p in paths]
     target_res = (
         max((i["width"] for i in infos), default=DEFAULT_RES[0]),
         max((i["height"] for i in infos), default=DEFAULT_RES[1]),
@@ -133,27 +156,37 @@ def generate(run_dir, clip_paths, k, duration, style, progress_cb=None, seed=Non
     target_res = (target_res[0] + target_res[0] % 2, target_res[1] + target_res[1] % 2)
 
     trimmed = []
-    for idx, (src, info) in enumerate(zip(clip_paths, infos)):
+    for idx, (clip, info) in enumerate(zip(clips, infos)):
         if progress_cb:
-            progress_cb("normalizing clips", idx, len(clip_paths))
-        offset = _trim_offset(info["duration"], duration, style, rng)
-        dst = trimmed_dir / f"{idx:02d}_{_stem(src)}.mp4"
-        trim_normalize(src, dst, offset, min(duration, info["duration"]),
-                       info["has_audio"], target_res)
+            progress_cb("normalizing clips", idx, len(clips))
+        clip_len = info["duration"]
+        # clamp the window inside the clip; short clips are used in full
+        offset = min(max(float(clip.get("offset", 0)), 0), max(clip_len - duration, 0))
+        use_audio = info["has_audio"] and clip.get("audio", True)
+        dst = trimmed_dir / f"{idx:02d}_{_stem(clip['path'])}.mp4"
+        trim_normalize(clip["path"], dst, offset, min(duration, clip_len),
+                       use_audio, target_res)
         trimmed.append(dst)
     if progress_cb:
-        progress_cb("normalizing clips", len(clip_paths), len(clip_paths))
+        progress_cb("normalizing clips", len(clips), len(clips))
 
-    total = count_permutations(len(clip_paths), k)
+    total = count_permutations(len(clips), k)
     outputs = []
     list_path = run_dir / "concat_list.txt"
-    for num, perm in enumerate(itertools.permutations(range(len(clip_paths)), k), 1):
+    tmp_concat = run_dir / "concat_tmp.mp4"
+    for num, perm in enumerate(itertools.permutations(range(len(clips)), k), 1):
         if progress_cb:
             progress_cb("concatenating permutations", num - 1, total)
         name = f"{num:0{len(str(total))}d}_" + "-".join(
-            _stem(clip_paths[i]) for i in perm) + ".mp4"
-        concat([trimmed[i].resolve() for i in perm], output_dir / name, list_path)
+            _stem(paths[i]) for i in perm) + ".mp4"
+        parts = [trimmed[i].resolve() for i in perm]
+        if music_path:
+            concat(parts, tmp_concat, list_path)
+            overlay_music(tmp_concat, music_path, output_dir / name)
+        else:
+            concat(parts, output_dir / name, list_path)
         outputs.append(name)
+    tmp_concat.unlink(missing_ok=True)
     if progress_cb:
         progress_cb("done", total, total)
     return outputs
