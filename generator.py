@@ -174,7 +174,8 @@ def count_permutations(n, k):
 
 
 def generate(run_dir, clips, k, duration, progress_cb=None, music_paths=None,
-             caption_style=None, timeline_caption_words=None, canvas="auto"):
+             caption_style=None, timeline_caption_words=None, canvas="auto",
+             caption_scale=1.0):
     """Produce every ordered permutation of k clips as concatenated videos.
 
     clips: list of {"path": ..., "offset": seconds, "audio": bool,
@@ -248,7 +249,7 @@ def generate(run_dir, clips, k, duration, progress_cb=None, music_paths=None,
                     timeline_caption_words, pos * duration, window)
                 ass_path = captions.build_ass(
                     wslice, caption_style, target_res,
-                    run_dir / f"cap_{idx:02d}_p{pos}.ass")
+                    run_dir / f"cap_{idx:02d}_p{pos}.ass", scale=caption_scale)
                 if ass_path is None:
                     if plain is None:  # no words in this span: share one encode
                         plain = trimmed_dir / f"{idx:02d}_{stem}.mp4"
@@ -271,7 +272,7 @@ def generate(run_dir, clips, k, duration, progress_cb=None, music_paths=None,
                          else captions.words_from_text(cap["text"], window))
                 ass_path = captions.build_ass(
                     words, caption_style, target_res,
-                    run_dir / f"cap_{idx:02d}.ass")
+                    run_dir / f"cap_{idx:02d}.ass", scale=caption_scale)
             dst = trimmed_dir / f"{idx:02d}_{stem}.mp4"
             trim_normalize(clip["path"], dst, offset, window,
                            use_audio, target_res, ass_path=ass_path, fill=fill)

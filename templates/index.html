@@ -105,6 +105,12 @@
     <button onclick="transcribeAudio()">transcribe</button>
   </span>
   <span id="capstatus"></span>
+  <br><br>
+  size: <input type="range" id="capsize" min="50" max="200" value="100" style="width:120px;vertical-align:middle">
+  <span id="capsizelabel">100%</span>
+  &nbsp;
+  <button onclick="capPreview()">preview</button>
+  <div><img id="cappreview" style="max-width:320px; display:none; margin-top:6px; border:1px solid #999"></div>
   <div id="capaudiorow" style="display:none; margin-top:6px">
     transcript: <input type="text" id="capaudiotext" style="width:75%" placeholder="transcribe the track or type its text">
   </div>
@@ -447,6 +453,42 @@ function captionPayload(n) {
   return {text: capText[n] || '', words: null};
 }
 
+function capScale() { return (+document.getElementById('capsize').value) / 100; }
+
+document.getElementById('capsize').oninput = e => {
+  document.getElementById('capsizelabel').textContent = e.target.value + '%';
+};
+document.getElementById('capsize').onchange = () => {
+  // live-refresh an already-open preview when the slider settles
+  if (document.getElementById('cappreview').style.display !== 'none') capPreview();
+};
+
+async function capPreview() {
+  const style = document.getElementById('capstyle').value;
+  const status = document.getElementById('capstatus');
+  if (!style) { status.textContent = 'pick a caption style first'; return; }
+  const names = selected();
+  if (!names.length) { status.textContent = 'select a clip first'; return; }
+  const source = document.getElementById('capsource').value;
+  const text = source === 'clips'
+    ? (capText[names[0]] || '') : (audioCapText[source] || '');
+  status.textContent = 'rendering preview...';
+  const res = await fetch('/caption_preview', {method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({style, scale: capScale(), text,
+                          canvas: document.getElementById('canvas').value,
+                          clips: names, offset: offsets[names[0]] || 0})});
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    status.textContent = err.error || 'preview failed';
+    return;
+  }
+  const img = document.getElementById('cappreview');
+  img.src = URL.createObjectURL(await res.blob());
+  img.style.display = 'block';
+  status.textContent = '';
+}
+
 function audioCaptionPayload() {
   const source = document.getElementById('capsource').value;
   if (source === 'clips') return null;
@@ -464,6 +506,7 @@ async function generate(confirmed) {
                             caption: captionPayload(n)})),
     canvas: document.getElementById('canvas').value,
     caption_style: document.getElementById('capstyle').value || null,
+    caption_scale: capScale(),
     caption_source: document.getElementById('capsource').value,
     audio_caption: audioCaptionPayload(),
     k: +document.getElementById('k').value,

@@ -80,6 +80,60 @@ def uploaded_clip(filename):
     return send_from_directory(UPLOADS, filename)
 
 
+@app.route("/caption_preview", methods=["POST"])
+def caption_preview():
+    """Render one real frame with the caption burned in, at the exact size
+    and output resolution a generate run would use."""
+    data = request.json
+    style = data.get("style")
+    if style not in ("classic", "highlight", "boxed", "neon"):
+        return jsonify({"error": "pick a caption style first"}), 400
+    if not generator.has_filter("ass"):
+        return jsonify({"error": "your ffmpeg build has no subtitle (libass) "
+                                 "support"}), 400
+    names = [secure_filename(n) for n in data.get("clips", [])]
+    paths = [UPLOADS / n for n in names if (UPLOADS / n).is_file()]
+    if not paths:
+        return jsonify({"error": "select at least one clip"}), 400
+    canvas = data.get("canvas") or "auto"
+    scale = min(max(float(data.get("scale", 1)), 0.3), 3.0)
+    offset = max(float(data.get("offset", 0)), 0)
+    text = (data.get("text") or "").strip() or "your captions look like this"
+
+    if canvas in ("vertical", "vertical_pad"):
+        target_res = (1080, 1920)
+    else:
+        infos = [generator.probe(p) for p in paths]
+        target_res = (max(i["width"] for i in infos),
+                      max(i["height"] for i in infos))
+        target_res = (target_res[0] + target_res[0] % 2,
+                      target_res[1] + target_res[1] % 2)
+
+    preview_dir = WORKSPACE / "preview"
+    preview_dir.mkdir(exist_ok=True)
+    words = captions.words_from_text(" ".join(text.split()[:5]), 2.0)
+    ass_path = captions.build_ass(words, style, target_res,
+                                  preview_dir / "preview.ass", scale=scale)
+    w, h = target_res
+    if canvas == "vertical":
+        vf = (f"scale={w}:{h}:force_original_aspect_ratio=increase,"
+              f"crop={w}:{h},setsar=1")
+    else:
+        vf = (f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+              f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1")
+    vf += (f",ass=filename={generator._quote_filter_path(ass_path)}"
+           f":fontsdir={generator._quote_filter_path(captions.FONTS_DIR)}"
+           f",scale=540:-2")
+    png = preview_dir / "preview.png"
+    try:
+        generator._run(["ffmpeg", "-y", "-ss", f"{offset:.3f}",
+                        "-i", str(paths[0]), "-frames:v", "1",
+                        "-vf", vf, str(png)])
+    except generator.GenerationError as e:
+        return jsonify({"error": str(e)}), 500
+    return send_file(png, mimetype="image/png", max_age=0)
+
+
 @app.route("/transcribe", methods=["POST"])
 def transcribe():
     # transcription only ever runs on uploaded audio tracks, never clip audio
@@ -159,6 +213,7 @@ def generate():
     caption_style = data.get("caption_style") or None
     if caption_style not in (None, "classic", "highlight", "boxed", "neon"):
         return jsonify({"error": "unknown caption style"}), 400
+    caption_scale = min(max(float(data.get("caption_scale", 1)), 0.3), 3.0)
     if caption_style and not generator.has_filter("ass"):
         return jsonify({"error":
             "your ffmpeg build has no subtitle (libass) support, so captions "
@@ -236,7 +291,8 @@ def generate():
                                          music_paths=music,
                                          caption_style=caption_style,
                                          timeline_caption_words=timeline_words,
-                                         canvas=canvas)
+                                         canvas=canvas,
+                                         caption_scale=caption_scale)
             jobs[run_id].update(outputs=outputs, finished=True, phase="done")
         except Exception as e:  # surface any failure to the UI
             jobs[run_id].update(error=str(e), finished=True, phase="error")

@@ -84,16 +84,17 @@ def _esc(word):
     return word.replace("\\", "").replace("{", "").replace("}", "")
 
 
-def build_ass(words, style, res, out_path):
+def build_ass(words, style, res, out_path, scale=1.0):
     """Write an ASS subtitle file for one clip window. Returns out_path or
-    None when there is nothing to show."""
+    None when there is nothing to show. scale multiplies the base font size."""
     if not words or style not in ("classic", "highlight", "boxed", "neon"):
         return None
     w_res, h_res = res
     # size from the narrow dimension so portrait video doesn't get giant text;
     # portrait captions sit higher, clear of Instagram's bottom UI overlay
     base = min(w_res, h_res)
-    fs = round(base * (0.075 if style == "boxed" else 0.095))
+    scale = min(max(scale, 0.3), 3.0)
+    fs = round(base * (0.075 if style == "boxed" else 0.095) * scale)
     outline = max(2, round(fs * 0.06))
     margin_v = round(h_res * (0.20 if h_res > w_res else 0.08))
     margin_h = round(w_res * 0.05)

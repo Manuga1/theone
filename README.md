@@ -49,7 +49,11 @@ Open http://localhost:5000.
    requirements.txt) and the words appear in sync with the audio across
    the whole output, whatever order the clips are in. The word-highlight
    style pops each word as it's spoken. Editing transcript text drops the
-   word sync and spreads words evenly instead. Audio-synced captions
+   word sync and spreads words evenly instead. The size slider scales
+   the captions (50–200%), and the preview button renders a real frame
+   from your first selected clip with the caption burned in at the exact
+   chosen size, style, and output mode — the preview refreshes when you
+   release the slider. Audio-synced captions
    render one variant of each clip per position (n·k encodes instead of
    n), keeping concat a stream copy; clips shorter than the window shift
    later captions slightly. Caption size scales with the frame's narrow
