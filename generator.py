@@ -159,7 +159,7 @@ def count_permutations(n, k):
 
 
 def generate(run_dir, clips, k, duration, progress_cb=None, music_paths=None,
-             caption_style=None):
+             caption_style=None, timeline_caption_words=None):
     """Produce every ordered permutation of k clips as concatenated videos.
 
     clips: list of {"path": ..., "offset": seconds, "audio": bool,
@@ -169,6 +169,15 @@ def generate(run_dir, clips, k, duration, progress_cb=None, music_paths=None,
     with caption_style. music_paths entries are {"path": ..., "start": s,
     "end": s|None} — each track is cut to its selection, then all are
     layered over every output, playing once (no looping).
+
+    timeline_caption_words, if given, are word timings relative to the
+    OUTPUT timeline (e.g. from a transcribed voiceover track). They replace
+    per-clip captions: every clip is rendered once per position it can
+    occupy, carrying the caption slice for that time span, so every
+    permutation shows the words at the right moment while concat stays a
+    stream copy. Position times assume full-length windows; clips shorter
+    than the window shift later captions slightly in permutations that
+    include them.
     progress_cb(phase, done, total): optional progress reporting hook.
     Returns list of output file names.
     """
@@ -198,6 +207,8 @@ def generate(run_dir, clips, k, duration, progress_cb=None, music_paths=None,
     # libx264 requires even dimensions
     target_res = (target_res[0] + target_res[0] % 2, target_res[1] + target_res[1] % 2)
 
+    # trimmed[i] is a list of k variants: the file to use when clip i sits at
+    # each position. Without timeline captions all positions share one file.
     trimmed = []
     for idx, (clip, info) in enumerate(zip(clips, infos)):
         if progress_cb:
@@ -207,19 +218,41 @@ def generate(run_dir, clips, k, duration, progress_cb=None, music_paths=None,
         offset = min(max(float(clip.get("offset", 0)), 0), max(clip_len - duration, 0))
         use_audio = info["has_audio"] and clip.get("audio", True)
         window = min(duration, clip_len)
-        ass_path = None
-        cap = clip.get("caption") or {}
-        if caption_style and (cap.get("words") or cap.get("text", "").strip()):
-            words = (captions.slice_words(cap["words"], offset, window)
-                     if cap.get("words")
-                     else captions.words_from_text(cap["text"], window))
-            ass_path = captions.build_ass(
-                words, caption_style, target_res,
-                run_dir / f"cap_{idx:02d}.ass")
-        dst = trimmed_dir / f"{idx:02d}_{_stem(clip['path'])}.mp4"
-        trim_normalize(clip["path"], dst, offset, window,
-                       use_audio, target_res, ass_path=ass_path)
-        trimmed.append(dst)
+        stem = _stem(clip["path"])
+        if caption_style and timeline_caption_words:
+            variants, plain = [], None
+            for pos in range(k):
+                wslice = captions.slice_words(
+                    timeline_caption_words, pos * duration, window)
+                ass_path = captions.build_ass(
+                    wslice, caption_style, target_res,
+                    run_dir / f"cap_{idx:02d}_p{pos}.ass")
+                if ass_path is None:
+                    if plain is None:  # no words in this span: share one encode
+                        plain = trimmed_dir / f"{idx:02d}_{stem}.mp4"
+                        trim_normalize(clip["path"], plain, offset, window,
+                                       use_audio, target_res)
+                    variants.append(plain)
+                else:
+                    dst = trimmed_dir / f"{idx:02d}_p{pos}_{stem}.mp4"
+                    trim_normalize(clip["path"], dst, offset, window,
+                                   use_audio, target_res, ass_path=ass_path)
+                    variants.append(dst)
+            trimmed.append(variants)
+        else:
+            ass_path = None
+            cap = clip.get("caption") or {}
+            if caption_style and (cap.get("words") or cap.get("text", "").strip()):
+                words = (captions.slice_words(cap["words"], offset, window)
+                         if cap.get("words")
+                         else captions.words_from_text(cap["text"], window))
+                ass_path = captions.build_ass(
+                    words, caption_style, target_res,
+                    run_dir / f"cap_{idx:02d}.ass")
+            dst = trimmed_dir / f"{idx:02d}_{stem}.mp4"
+            trim_normalize(clip["path"], dst, offset, window,
+                           use_audio, target_res, ass_path=ass_path)
+            trimmed.append([dst] * k)
     if progress_cb:
         progress_cb("normalizing clips", len(clips), len(clips))
 
@@ -232,7 +265,7 @@ def generate(run_dir, clips, k, duration, progress_cb=None, music_paths=None,
             progress_cb("concatenating permutations", num - 1, total)
         name = f"{num:0{len(str(total))}d}_" + "-".join(
             _stem(paths[i]) for i in perm) + ".mp4"
-        parts = [trimmed[i].resolve() for i in perm]
+        parts = [trimmed[ci][pos].resolve() for pos, ci in enumerate(perm)]
         if music_files:
             concat(parts, tmp_concat, list_path)
             overlay_music(tmp_concat, music_files, output_dir / name)

@@ -80,8 +80,9 @@ def uploaded_clip(filename):
 
 @app.route("/transcribe", methods=["POST"])
 def transcribe():
+    # transcription only ever runs on uploaded audio tracks, never clip audio
     name = secure_filename(request.json.get("name", ""))
-    target = UPLOADS / name
+    target = MUSIC_DIR / name
     if not target.is_file():
         return jsonify({"error": f"{name} not found"}), 404
     try:
@@ -176,6 +177,27 @@ def generate():
     if any(not m["path"].is_file() for m in music):
         return jsonify({"error": "one or more selected music tracks no longer exist"}), 400
 
+    # captions synced to a chosen audio track live on the output timeline
+    timeline_words = None
+    source = data.get("caption_source") or "clips"
+    if caption_style and source != "clips":
+        entry = next((m for m in music if m["path"].name == source), None)
+        if not entry:
+            return jsonify({"error": "caption source track must be one of the "
+                                     "checked music tracks"}), 400
+        ac = data.get("audio_caption") or {}
+        if ac.get("words"):
+            end = entry["end"]
+            if end is None:
+                end = generator.probe_audio(entry["path"])["duration"]
+            timeline_words = captions.slice_words(
+                ac["words"], entry["start"], end - entry["start"])
+        elif ac.get("text", "").strip():
+            timeline_words = captions.words_from_text(ac["text"], k * duration)
+        else:
+            return jsonify({"error": "transcribe the caption track (or type "
+                                     "its text) first"}), 400
+
     total = generator.count_permutations(len(clips), k)
     if total > HARD_CAP:
         return jsonify({"error": f"{total} outputs exceeds the hard cap of {HARD_CAP}",
@@ -201,7 +223,8 @@ def generate():
             outputs = generator.generate(WORKSPACE / f"run-{run_id}", clips, k,
                                          duration, progress_cb=progress,
                                          music_paths=music,
-                                         caption_style=caption_style)
+                                         caption_style=caption_style,
+                                         timeline_caption_words=timeline_words)
             jobs[run_id].update(outputs=outputs, finished=True, phase="done")
         except Exception as e:  # surface any failure to the UI
             jobs[run_id].update(error=str(e), finished=True, phase="error")

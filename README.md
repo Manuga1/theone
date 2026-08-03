@@ -35,15 +35,18 @@ Open http://localhost:5000.
    sound; "mute all clip audio" silences every clip (checked tracks still
    play).
 4. Captions: pick a style (bold classic / word highlight / boxed / neon
-   glow) to reveal a caption box under each clip. Type text, or hit
-   "transcribe" to fill it from the clip's speech via a local Whisper model
-   (first use downloads ~150 MB; needs `faster-whisper` from
-   requirements.txt). Transcribed captions keep word-level timing — the
-   word-highlight style pops each word as it's spoken. Editing the text
-   drops the sync and spreads words evenly instead. Captions are burned
-   into each clip during normalization, so they follow the clip through
-   every permutation at no extra encoding cost (fonts are bundled in
-   `fonts/`).
+   glow), then choose the source. "Typed text per clip" shows a caption box
+   under each clip; that text is burned into the clip and follows it
+   through every permutation. Or pick one of your uploaded audio tracks —
+   hit "transcribe" to run a local Whisper model on that track (never on
+   clip audio; first use downloads ~150 MB, needs `faster-whisper` from
+   requirements.txt) and the words appear in sync with the audio across
+   the whole output, whatever order the clips are in. The word-highlight
+   style pops each word as it's spoken. Editing transcript text drops the
+   word sync and spreads words evenly instead. Audio-synced captions
+   render one variant of each clip per position (n·k encodes instead of
+   n), keeping concat a stream copy; clips shorter than the window shift
+   later captions slightly. Fonts are bundled in `fonts/`.
 5. Generate. Outputs land in `workspace/run-<id>/output/` and are linked in
    the page when done.
 

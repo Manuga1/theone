@@ -84,20 +84,30 @@
 <fieldset>
   <legend>4. captions</legend>
   style:
-  <select id="capstyle" onchange="capStyleChanged()">
+  <select id="capstyle" onchange="capControlsChanged()">
     <option value="">none</option>
     <option value="classic">bold classic</option>
     <option value="highlight">word highlight</option>
     <option value="boxed">boxed</option>
     <option value="neon">neon glow</option>
   </select>
-  &nbsp;
-  <button onclick="transcribeAll()">auto-transcribe selected clips</button>
+  &nbsp; from:
+  <select id="capsource" onchange="capControlsChanged()">
+    <option value="clips">typed text per clip</option>
+  </select>
+  <span id="capaudio" style="display:none">
+    <button onclick="transcribeAudio()">transcribe</button>
+  </span>
   <span id="capstatus"></span>
+  <div id="capaudiorow" style="display:none; margin-top:6px">
+    transcript: <input type="text" id="capaudiotext" style="width:75%" placeholder="transcribe the track or type its text">
+  </div>
   <br>
-  <small>pick a style to show a caption box under each clip. transcription
-    runs locally (first use downloads the model, ~150&nbsp;MB). edited text
-    loses word-sync and is spread evenly instead.</small>
+  <small>captions come from typed per-clip text, or from transcribing one of
+    your uploaded audio tracks (never from clip audio) — those captions
+    follow the audio across the whole video. transcription runs locally
+    (first use downloads the model, ~150&nbsp;MB). edited text loses
+    word-sync and is spread evenly instead.</small>
 </fieldset>
 
 <fieldset>
@@ -111,9 +121,7 @@
 let clips = [];              // [{name, duration, resolution}]
 const offsets = {};          // name -> window start (s), survives list refreshes
 const audioOn = {};          // name -> bool
-const capText = {};          // name -> caption text
-const capWords = {};         // name -> transcribed word timings
-const capTranscribed = {};   // name -> text as it came from whisper
+const capText = {};          // name -> typed per-clip caption text
 
 function winDur() { return +document.getElementById('duration').value || 0.1; }
 
@@ -212,8 +220,7 @@ async function refreshClips() {
       `<label title="use this clip's own audio">&#9834;<input type="checkbox" class="audiocheck" ${audioOn[c.name] ? 'checked' : ''}></label>` +
       `<button data-del="${c.name}">x</button>` +
       `</div>` +
-      `<div class="caprow">caption: <input type="text" class="capinput" placeholder="type or auto-transcribe">` +
-      ` <button class="captranscribe">transcribe</button></div>`;
+      `<div class="caprow">caption: <input type="text" class="capinput" placeholder="type this clip's caption"></div>`;
     list.appendChild(block);
     const row = block;
     attachDrag(c, row.querySelector('.track'), row.querySelector('.window'));
@@ -227,7 +234,6 @@ async function refreshClips() {
     const cin = row.querySelector('.capinput');
     cin.value = capText[c.name];
     cin.oninput = () => { capText[c.name] = cin.value; };
-    row.querySelector('.captranscribe').onclick = () => transcribeClip(c.name);
     renderWindow(c);
   }
   updateCount();
@@ -324,6 +330,13 @@ async function refreshMusic() {
   audTracks = m.tracks;
   const list = document.getElementById('tracklist');
   list.innerHTML = '';
+  // caption-source dropdown mirrors the uploaded tracks
+  const src = document.getElementById('capsource');
+  const cur = src.value;
+  src.innerHTML = '<option value="clips">typed text per clip</option>' +
+    m.tracks.map(t => `<option value="${t.name}">audio: ${t.name}</option>`).join('');
+  src.value = [...src.options].some(o => o.value === cur) ? cur : 'clips';
+  capControlsChanged();
   for (const t of m.tracks) {
     if (!(t.name in trackOn)) trackOn[t.name] = true;
     if (!(t.name in trackSel)) trackSel[t.name] = {start: 0, end: t.duration};
@@ -390,44 +403,52 @@ async function uploadMusic() {
   refreshMusic();
 }
 
-function capStyleChanged() {
-  const on = !!document.getElementById('capstyle').value;
-  document.body.classList.toggle('captions-on', on);
-}
+const audioCapWords = {};        // track name -> word timings (full track)
+const audioCapTranscribed = {};  // track name -> text as whisper produced it
+const audioCapText = {};         // track name -> current (possibly edited) text
 
-async function transcribeClip(name) {
-  const block = document.querySelector(`[data-clip="${CSS.escape(name)}"]`);
-  const btn = block.querySelector('.captranscribe');
-  btn.disabled = true; btn.textContent = '...';
-  try {
-    const res = await (await fetch('/transcribe', {method: 'POST',
-      headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name})})).json();
-    if (res.error) { document.getElementById('capstatus').textContent = res.error; return; }
-    capWords[name] = res.words;
-    capTranscribed[name] = res.text;
-    capText[name] = res.text;
-    block.querySelector('.capinput').value = res.text;
-    document.getElementById('capstatus').textContent = '';
-  } finally {
-    btn.disabled = false; btn.textContent = 'transcribe';
+function capControlsChanged() {
+  const style = document.getElementById('capstyle').value;
+  const source = document.getElementById('capsource').value;
+  const fromAudio = !!style && source !== 'clips';
+  document.body.classList.toggle('captions-on', !!style && source === 'clips');
+  document.getElementById('capaudio').style.display = fromAudio ? '' : 'none';
+  document.getElementById('capaudiorow').style.display = fromAudio ? '' : 'none';
+  if (fromAudio) {
+    document.getElementById('capaudiotext').value = audioCapText[source] || '';
   }
 }
 
-async function transcribeAll() {
+document.getElementById('capaudiotext').oninput = e => {
+  audioCapText[document.getElementById('capsource').value] = e.target.value;
+};
+
+async function transcribeAudio() {
+  const name = document.getElementById('capsource').value;
   const status = document.getElementById('capstatus');
-  const names = selected();
-  for (let i = 0; i < names.length; i++) {
-    status.textContent = `transcribing ${i + 1}/${names.length}...`;
-    await transcribeClip(names[i]);
-    if (status.textContent.includes('transcribing') === false) return; // error shown
-  }
+  status.textContent = 'transcribing...';
+  const res = await (await fetch('/transcribe', {method: 'POST',
+    headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name})})).json();
+  if (res.error) { status.textContent = res.error; return; }
+  audioCapWords[name] = res.words;
+  audioCapTranscribed[name] = res.text;
+  audioCapText[name] = res.text;
+  document.getElementById('capaudiotext').value = res.text;
   status.textContent = 'transcribed';
 }
 
 function captionPayload(n) {
+  return {text: capText[n] || '', words: null};
+}
+
+function audioCaptionPayload() {
+  const source = document.getElementById('capsource').value;
+  if (source === 'clips') return null;
   // word timings only stay valid while the text matches the transcription
-  const words = (capWords[n] && capText[n] === capTranscribed[n]) ? capWords[n] : null;
-  return {text: capText[n] || '', words};
+  const words = (audioCapWords[source] &&
+                 audioCapText[source] === audioCapTranscribed[source])
+                ? audioCapWords[source] : null;
+  return {text: audioCapText[source] || '', words};
 }
 
 async function generate(confirmed) {
@@ -436,6 +457,8 @@ async function generate(confirmed) {
     clips: names.map(n => ({name: n, offset: offsets[n] || 0, audio: audioOn[n] ?? true,
                             caption: captionPayload(n)})),
     caption_style: document.getElementById('capstyle').value || null,
+    caption_source: document.getElementById('capsource').value,
+    audio_caption: audioCaptionPayload(),
     k: +document.getElementById('k').value,
     duration: winDur(),
     music: selectedTracks(),
