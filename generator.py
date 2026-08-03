@@ -94,11 +94,12 @@ def trim_normalize(src, dst, offset, duration, use_audio, target_res=DEFAULT_RES
     _run(cmd)
 
 
-def trim_audio(src, dst, start, duration):
-    """Cut a segment out of an audio file, re-encoded to AAC."""
+def trim_audio(src, dst, start, duration, volume=1.0):
+    """Cut a segment out of an audio file at the given gain, re-encoded to AAC."""
     _run([
         "ffmpeg", "-y", "-ss", f"{start:.3f}", "-t", f"{duration:.3f}",
-        "-i", str(src), "-vn", "-c:a", "aac", "-ar", "44100", "-ac", "2",
+        "-i", str(src), "-vn", "-af", f"volume={volume:.3f}",
+        "-c:a", "aac", "-ar", "44100", "-ac", "2",
         str(dst),
     ])
 
@@ -169,7 +170,7 @@ def generate(run_dir, clips, k, duration, progress_cb=None, music_paths=None):
         end = info["duration"] if end is None else min(float(end), info["duration"])
         seg = max(end - start, 0.1)
         dst = run_dir / f"music_{i:02d}.m4a"
-        trim_audio(m["path"], dst, start, seg)
+        trim_audio(m["path"], dst, start, seg, m.get("volume", 1.0))
         music_files.append(dst)
 
     paths = [c["path"] for c in clips]

@@ -216,6 +216,7 @@ async function upload() {
 
 const trackOn = {};          // name -> include in the overlay mix
 const trackSel = {};         // name -> {start, end} selection in seconds
+const trackVol = {};         // name -> gain (1 = 100%)
 const MIN_SEG = 0.2;
 
 function renderTrackWindow(t) {
@@ -238,6 +239,7 @@ function previewTrack(t) {
   if (!a.src.endsWith(src)) a.src = src;
   const sel = trackSel[t.name];
   a.currentTime = sel.start;
+  a.volume = Math.min(trackVol[t.name] ?? 1, 1);  // element preview caps at 100%
   a.play().catch(() => {});
   clearInterval(a._stopTimer);
   a._stopTimer = setInterval(() => { if (a.currentTime >= sel.end) { a.pause(); clearInterval(a._stopTimer); } }, 100);
@@ -284,6 +286,7 @@ async function refreshMusic() {
   for (const t of m.tracks) {
     if (!(t.name in trackOn)) trackOn[t.name] = true;
     if (!(t.name in trackSel)) trackSel[t.name] = {start: 0, end: t.duration};
+    if (!(t.name in trackVol)) trackVol[t.name] = 1;
     const row = document.createElement('div');
     row.className = 'trackrow';
     row.dataset.track = t.name;
@@ -293,10 +296,17 @@ async function refreshMusic() {
       `<span class="len">${t.duration.toFixed(1)}s</span>` +
       `<span class="track"><span class="awindow"></span></span>` +
       `<span class="offlabel"></span>` +
+      `<label title="volume">&#128266;<input type="range" class="volslider" min="0" max="200" value="${Math.round(trackVol[t.name] * 100)}" style="width:80px;vertical-align:middle"></label>` +
+      `<span class="vollabel" style="width:38px">${Math.round(trackVol[t.name] * 100)}%</span>` +
       `<button data-deltrack="${t.name}">x</button>`;
     list.appendChild(row);
     attachTrackDrag(t, row.querySelector('.track'), row.querySelector('.awindow'));
     row.querySelector('.trackcheck').onchange = e => { trackOn[t.name] = e.target.checked; };
+    row.querySelector('.volslider').oninput = e => {
+      trackVol[t.name] = e.target.value / 100;
+      row.querySelector('.vollabel').textContent = e.target.value + '%';
+    };
+    row.querySelector('.volslider').onchange = () => previewTrack(t);
     row.querySelector('[data-deltrack]').onclick = async () => {
       await fetch('/music', {method: 'DELETE', headers: {'Content-Type': 'application/json'},
                              body: JSON.stringify({name: t.name})});
@@ -308,7 +318,8 @@ async function refreshMusic() {
 
 function selectedTracks() {
   return [...document.querySelectorAll('.trackcheck:checked')].map(c =>
-    ({name: c.value, start: trackSel[c.value].start, end: trackSel[c.value].end}));
+    ({name: c.value, start: trackSel[c.value].start, end: trackSel[c.value].end,
+      volume: trackVol[c.value] ?? 1}));
 }
 
 async function uploadMusic() {

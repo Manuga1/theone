@@ -142,6 +142,7 @@ def generate():
             "path": MUSIC_DIR / secure_filename(m.get("name", "")),
             "start": max(float(m.get("start", 0)), 0),
             "end": None if end is None else float(end),
+            "volume": min(max(float(m.get("volume", 1)), 0), 4),
         })
 
     if any(not c["path"].is_file() for c in clips):

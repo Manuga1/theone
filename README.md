@@ -27,7 +27,8 @@ Open http://localhost:5000.
    over every output. Each track has its own timeline window: drag it to
    move, drag its edges to resize, so only that part of the track is used
    (looped if shorter than the video); click a track to preview the
-   selection. The ♪ checkbox per clip keeps or drops that clip's own
+   selection. Each track also has a volume slider (0–200%).
+   The ♪ checkbox per clip keeps or drops that clip's own
    sound; "mute all clip audio" silences every clip (checked tracks still
    play).
 4. Generate. Outputs land in `workspace/run-<id>/output/` and are linked in
