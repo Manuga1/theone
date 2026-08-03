@@ -107,11 +107,12 @@ def trim_audio(src, dst, start, duration, volume=1.0):
 def overlay_music(video, music_paths, dst):
     """Mix one or more music files over the video's audio; video is copied.
 
-    Each track is looped if shorter than the video and cut at the video's end.
+    Each track plays once from the start of the video — no looping — and is
+    cut at the video's end if longer.
     """
     cmd = ["ffmpeg", "-y", "-i", str(video)]
     for m in music_paths:
-        cmd += ["-stream_loop", "-1", "-i", str(m)]
+        cmd += ["-i", str(m)]
     inputs = "".join(f"[{i}:a]" for i in range(len(music_paths) + 1))
     cmd += [
         "-filter_complex",
@@ -152,7 +153,7 @@ def generate(run_dir, clips, k, duration, progress_cb=None, music_paths=None):
     where the trimmed window starts in the source; audio=False silences that
     clip's own sound. music_paths entries are {"path": ..., "start": s,
     "end": s|None} — each track is cut to its selection, then all are
-    layered over every output (each looped to fit).
+    layered over every output, playing once (no looping).
     progress_cb(phase, done, total): optional progress reporting hook.
     Returns list of output file names.
     """

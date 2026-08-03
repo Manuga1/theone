@@ -65,9 +65,13 @@
   <button onclick="uploadMusic()">upload</button>
   <span id="musicstatus"></span>
   <audio id="aprev" controls style="display:none; width:100%"></audio>
+  <div style="margin-top:6px">
+    selection length: <input type="number" id="audlen" min="0.2" step="0.1" style="width:5em"> s
+    <button onclick="applyAudLen()">apply to all tracks</button>
+  </div>
   <div id="tracklist"></div>
-  <small>checked tracks are layered together over every output (each selection
-    looped to fit). drag the orange window to move it, drag its edges to
+  <small>checked tracks are layered together over every output, playing once
+    (no looping). drag the orange window to move it, drag its edges to
     resize; click a track to preview the selection.</small>
   <br><br>
   <label><input type="checkbox" id="muteall"> mute all clip audio</label>
@@ -281,6 +285,7 @@ function attachTrackDrag(t, track, win) {
 
 async function refreshMusic() {
   const m = await (await fetch('/music')).json();
+  audTracks = m.tracks;
   const list = document.getElementById('tracklist');
   list.innerHTML = '';
   for (const t of m.tracks) {
@@ -312,6 +317,21 @@ async function refreshMusic() {
                              body: JSON.stringify({name: t.name})});
       refreshMusic();
     };
+    renderTrackWindow(t);
+  }
+}
+
+let audTracks = [];          // last-fetched track metadata for applyAudLen
+
+function applyAudLen() {
+  const len = +document.getElementById('audlen').value;
+  if (!len || len < MIN_SEG) return;
+  for (const t of audTracks) {
+    const sel = trackSel[t.name];
+    const want = Math.min(len, t.duration);
+    // keep the window's start, pulling it back if the length doesn't fit
+    sel.start = Math.min(sel.start, t.duration - want);
+    sel.end = sel.start + want;
     renderTrackWindow(t);
   }
 }
