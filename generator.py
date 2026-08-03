@@ -94,6 +94,15 @@ def trim_normalize(src, dst, offset, duration, use_audio, target_res=DEFAULT_RES
     _run(cmd)
 
 
+def trim_audio(src, dst, start, duration):
+    """Cut a segment out of an audio file, re-encoded to AAC."""
+    _run([
+        "ffmpeg", "-y", "-ss", f"{start:.3f}", "-t", f"{duration:.3f}",
+        "-i", str(src), "-vn", "-c:a", "aac", "-ar", "44100", "-ac", "2",
+        str(dst),
+    ])
+
+
 def overlay_music(video, music_paths, dst):
     """Mix one or more music files over the video's audio; video is copied.
 
@@ -140,8 +149,9 @@ def generate(run_dir, clips, k, duration, progress_cb=None, music_paths=None):
 
     clips: list of {"path": ..., "offset": seconds, "audio": bool} — offset is
     where the trimmed window starts in the source; audio=False silences that
-    clip's own sound. music_paths, if given, are all layered over every
-    output (each looped to fit).
+    clip's own sound. music_paths entries are {"path": ..., "start": s,
+    "end": s|None} — each track is cut to its selection, then all are
+    layered over every output (each looped to fit).
     progress_cb(phase, done, total): optional progress reporting hook.
     Returns list of output file names.
     """
@@ -150,6 +160,17 @@ def generate(run_dir, clips, k, duration, progress_cb=None, music_paths=None):
     output_dir = run_dir / "output"
     trimmed_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    music_files = []
+    for i, m in enumerate(music_paths or []):
+        info = probe_audio(m["path"])
+        start = min(max(float(m.get("start", 0)), 0), info["duration"])
+        end = m.get("end")
+        end = info["duration"] if end is None else min(float(end), info["duration"])
+        seg = max(end - start, 0.1)
+        dst = run_dir / f"music_{i:02d}.m4a"
+        trim_audio(m["path"], dst, start, seg)
+        music_files.append(dst)
 
     paths = [c["path"] for c in clips]
     infos = [probe(p) for p in paths]
@@ -185,9 +206,9 @@ def generate(run_dir, clips, k, duration, progress_cb=None, music_paths=None):
         name = f"{num:0{len(str(total))}d}_" + "-".join(
             _stem(paths[i]) for i in perm) + ".mp4"
         parts = [trimmed[i].resolve() for i in perm]
-        if music_paths:
+        if music_files:
             concat(parts, tmp_concat, list_path)
-            overlay_music(tmp_concat, music_paths, output_dir / name)
+            overlay_music(tmp_concat, music_files, output_dir / name)
         else:
             concat(parts, output_dir / name, list_path)
         outputs.append(name)

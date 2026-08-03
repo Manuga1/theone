@@ -24,9 +24,12 @@ Open http://localhost:5000.
    randomized.
 2. Set k (clips per output) and seconds per clip.
 3. Audio: optionally upload music tracks — every checked track is layered
-   over every output (each looped if shorter than the video). The ♪
-   checkbox per clip keeps or drops that clip's own sound; "mute all clip
-   audio" silences every clip (checked tracks still play).
+   over every output. Each track has its own timeline window: drag it to
+   move, drag its edges to resize, so only that part of the track is used
+   (looped if shorter than the video); click a track to preview the
+   selection. The ♪ checkbox per clip keeps or drops that clip's own
+   sound; "mute all clip audio" silences every clip (checked tracks still
+   play).
 4. Generate. Outputs land in `workspace/run-<id>/output/` and are linked in
    the page when done.
 

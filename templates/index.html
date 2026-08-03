@@ -19,6 +19,17 @@
   .window:active { cursor: grabbing; }
   .offlabel { width: 90px; font-size: 0.85em; }
   .muted-note { color: #888; }
+  .trackrow { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid #ccc; }
+  .trackrow .name { width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .trackrow .len { width: 55px; text-align: right; }
+  .awindow { position: absolute; top: 0; height: 100%; background: #d98a4a; border-radius: 3px;
+             min-width: 4px; opacity: 0.85; cursor: grab; }
+  .awindow::before, .awindow::after {
+    content: ""; position: absolute; top: 0; width: 6px; height: 100%;
+    background: rgba(0,0,0,0.35); cursor: ew-resize;
+  }
+  .awindow::before { left: 0; border-radius: 3px 0 0 3px; }
+  .awindow::after { right: 0; border-radius: 0 3px 3px 0; }
 </style>
 </head>
 <body>
@@ -53,8 +64,11 @@
   music overlay: <input type="file" id="musicfile" accept="audio/*" multiple>
   <button onclick="uploadMusic()">upload</button>
   <span id="musicstatus"></span>
+  <audio id="aprev" controls style="display:none; width:100%"></audio>
   <div id="tracklist"></div>
-  <small>checked tracks are layered together over every output (looped to fit).</small>
+  <small>checked tracks are layered together over every output (each selection
+    looped to fit). drag the orange window to move it, drag its edges to
+    resize; click a track to preview the selection.</small>
   <br><br>
   <label><input type="checkbox" id="muteall"> mute all clip audio</label>
 </fieldset>
@@ -201,6 +215,67 @@ async function upload() {
 }
 
 const trackOn = {};          // name -> include in the overlay mix
+const trackSel = {};         // name -> {start, end} selection in seconds
+const MIN_SEG = 0.2;
+
+function renderTrackWindow(t) {
+  const row = document.querySelector(`[data-track="${CSS.escape(t.name)}"]`);
+  if (!row) return;
+  const sel = trackSel[t.name];
+  sel.start = Math.min(Math.max(sel.start, 0), t.duration - MIN_SEG);
+  sel.end = Math.min(Math.max(sel.end, sel.start + MIN_SEG), t.duration);
+  const win = row.querySelector('.awindow');
+  win.style.left = (sel.start / t.duration * 100) + '%';
+  win.style.width = ((sel.end - sel.start) / t.duration * 100) + '%';
+  row.querySelector('.offlabel').textContent =
+    `${sel.start.toFixed(1)}–${sel.end.toFixed(1)}s`;
+}
+
+function previewTrack(t) {
+  const a = document.getElementById('aprev');
+  a.style.display = 'block';
+  const src = '/music/' + encodeURIComponent(t.name);
+  if (!a.src.endsWith(src)) a.src = src;
+  const sel = trackSel[t.name];
+  a.currentTime = sel.start;
+  a.play().catch(() => {});
+  clearInterval(a._stopTimer);
+  a._stopTimer = setInterval(() => { if (a.currentTime >= sel.end) { a.pause(); clearInterval(a._stopTimer); } }, 100);
+}
+
+function attachTrackDrag(t, track, win) {
+  let mode = null, grabOffset = 0;
+  const secsAt = e => {
+    const rect = track.getBoundingClientRect();
+    return (e.clientX - rect.left) / rect.width * t.duration;
+  };
+  win.addEventListener('pointerdown', e => {
+    const rect = win.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    mode = x < 8 ? 'left' : (x > rect.width - 8 ? 'right' : 'move');
+    grabOffset = secsAt(e) - trackSel[t.name].start;
+    win.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+  win.addEventListener('pointermove', e => {
+    if (!mode) return;
+    const sel = trackSel[t.name];
+    const s = secsAt(e);
+    if (mode === 'left') sel.start = Math.min(s, sel.end - MIN_SEG);
+    else if (mode === 'right') sel.end = Math.max(s, sel.start + MIN_SEG);
+    else {
+      const len = sel.end - sel.start;
+      sel.start = Math.min(Math.max(s - grabOffset, 0), t.duration - len);
+      sel.end = sel.start + len;
+    }
+    renderTrackWindow(t);
+  });
+  win.addEventListener('pointerup', () => { mode = null; previewTrack(t); });
+  track.addEventListener('click', e => {
+    if (e.target !== track) return;
+    previewTrack(t);
+  });
+}
 
 async function refreshMusic() {
   const m = await (await fetch('/music')).json();
@@ -208,22 +283,32 @@ async function refreshMusic() {
   list.innerHTML = '';
   for (const t of m.tracks) {
     if (!(t.name in trackOn)) trackOn[t.name] = true;
+    if (!(t.name in trackSel)) trackSel[t.name] = {start: 0, end: t.duration};
     const row = document.createElement('div');
+    row.className = 'trackrow';
+    row.dataset.track = t.name;
     row.innerHTML =
-      `<label><input type="checkbox" class="trackcheck" value="${t.name}" ${trackOn[t.name] ? 'checked' : ''}>` +
-      ` ${t.name} (${t.duration}s)</label> <button data-deltrack="${t.name}">x</button>`;
+      `<input type="checkbox" class="trackcheck" value="${t.name}" ${trackOn[t.name] ? 'checked' : ''}>` +
+      `<span class="name" title="${t.name}">${t.name}</span>` +
+      `<span class="len">${t.duration.toFixed(1)}s</span>` +
+      `<span class="track"><span class="awindow"></span></span>` +
+      `<span class="offlabel"></span>` +
+      `<button data-deltrack="${t.name}">x</button>`;
     list.appendChild(row);
+    attachTrackDrag(t, row.querySelector('.track'), row.querySelector('.awindow'));
     row.querySelector('.trackcheck').onchange = e => { trackOn[t.name] = e.target.checked; };
     row.querySelector('[data-deltrack]').onclick = async () => {
       await fetch('/music', {method: 'DELETE', headers: {'Content-Type': 'application/json'},
                              body: JSON.stringify({name: t.name})});
       refreshMusic();
     };
+    renderTrackWindow(t);
   }
 }
 
 function selectedTracks() {
-  return [...document.querySelectorAll('.trackcheck:checked')].map(c => c.value);
+  return [...document.querySelectorAll('.trackcheck:checked')].map(c =>
+    ({name: c.value, start: trackSel[c.value].start, end: trackSel[c.value].end}));
 }
 
 async function uploadMusic() {

@@ -77,6 +77,11 @@ def uploaded_clip(filename):
     return send_from_directory(UPLOADS, filename)
 
 
+@app.route("/music/<path:filename>")
+def music_file(filename):
+    return send_from_directory(MUSIC_DIR, filename)
+
+
 @app.route("/music", methods=["GET", "POST", "DELETE"])
 def music():
     if request.method == "POST":
@@ -128,7 +133,16 @@ def generate():
         })
     k = int(data.get("k", 0))
     duration = float(data.get("duration", 0))
-    music = [MUSIC_DIR / secure_filename(n) for n in data.get("music", [])]
+    music = []
+    for m in data.get("music", []):
+        if isinstance(m, str):  # bare name = whole track
+            m = {"name": m}
+        end = m.get("end")
+        music.append({
+            "path": MUSIC_DIR / secure_filename(m.get("name", "")),
+            "start": max(float(m.get("start", 0)), 0),
+            "end": None if end is None else float(end),
+        })
 
     if any(not c["path"].is_file() for c in clips):
         return jsonify({"error": "one or more selected clips no longer exist"}), 400
@@ -138,7 +152,7 @@ def generate():
         return jsonify({"error": f"k must be between 1 and {len(clips)}"}), 400
     if duration <= 0:
         return jsonify({"error": "clip duration must be positive"}), 400
-    if any(not m.is_file() for m in music):
+    if any(not m["path"].is_file() for m in music):
         return jsonify({"error": "one or more selected music tracks no longer exist"}), 400
 
     total = generator.count_permutations(len(clips), k)
