@@ -54,6 +54,12 @@
   <legend>2. settings</legend>
   clips per video (k): <input type="number" id="k" value="2" min="1" style="width:4em">
   &nbsp; seconds per clip: <input type="number" id="duration" value="3" min="0.1" step="0.1" style="width:5em">
+  &nbsp; output:
+  <select id="canvas">
+    <option value="auto">auto (fit all clips)</option>
+    <option value="vertical">vertical 1080&times;1920 &mdash; crop to fill</option>
+    <option value="vertical_pad">vertical 1080&times;1920 &mdash; letterbox</option>
+  </select>
   <br><br>
   position windows:
   <button onclick="preset('start')">all at start</button>
@@ -456,6 +462,7 @@ async function generate(confirmed) {
   const body = {
     clips: names.map(n => ({name: n, offset: offsets[n] || 0, audio: audioOn[n] ?? true,
                             caption: captionPayload(n)})),
+    canvas: document.getElementById('canvas').value,
     caption_style: document.getElementById('capstyle').value || null,
     caption_source: document.getElementById('capsource').value,
     audio_caption: audioCaptionPayload(),

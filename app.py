@@ -153,6 +153,9 @@ def generate():
         })
     k = int(data.get("k", 0))
     duration = float(data.get("duration", 0))
+    canvas = data.get("canvas") or "auto"
+    if canvas not in ("auto", "vertical", "vertical_pad"):
+        return jsonify({"error": "unknown canvas mode"}), 400
     caption_style = data.get("caption_style") or None
     if caption_style not in (None, "classic", "highlight", "boxed", "neon"):
         return jsonify({"error": "unknown caption style"}), 400
@@ -232,7 +235,8 @@ def generate():
                                          duration, progress_cb=progress,
                                          music_paths=music,
                                          caption_style=caption_style,
-                                         timeline_caption_words=timeline_words)
+                                         timeline_caption_words=timeline_words,
+                                         canvas=canvas)
             jobs[run_id].update(outputs=outputs, finished=True, phase="done")
         except Exception as e:  # surface any failure to the UI
             jobs[run_id].update(error=str(e), finished=True, phase="error")

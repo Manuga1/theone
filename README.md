@@ -25,7 +25,10 @@ Open http://localhost:5000.
    part of the clip gets used (click a track to preview that segment).
    The "position windows" buttons are presets: all at start / centered /
    randomized.
-2. Set k (clips per output) and seconds per clip.
+2. Set k (clips per output), seconds per clip, and the output size:
+   "auto" letterboxes everything onto a frame fitting all clips; the
+   vertical 1080×1920 modes target Instagram/phone — "crop to fill" (the
+   social-standard look) or "letterbox".
 3. Audio: optionally upload music tracks — every checked track is layered
    over every output. Each track has its own timeline window: drag it to
    move, drag its edges to resize, so only that part of the track is used;
@@ -49,7 +52,9 @@ Open http://localhost:5000.
    word sync and spreads words evenly instead. Audio-synced captions
    render one variant of each clip per position (n·k encodes instead of
    n), keeping concat a stream copy; clips shorter than the window shift
-   later captions slightly. Fonts are bundled in `fonts/`.
+   later captions slightly. Caption size scales with the frame's narrow
+   dimension and portrait captions sit higher, clear of Instagram's
+   bottom UI. Fonts are bundled in `fonts/`.
 5. Generate. Outputs land in `workspace/run-<id>/output/` and are linked in
    the page when done, along with a "download all" link that fetches the
    whole run as one zip (unzips into a `run-<id>/` folder).

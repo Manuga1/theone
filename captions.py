@@ -90,22 +90,26 @@ def build_ass(words, style, res, out_path):
     if not words or style not in ("classic", "highlight", "boxed", "neon"):
         return None
     w_res, h_res = res
-    fs = round(h_res * (0.085 if style == "boxed" else 0.11))
+    # size from the narrow dimension so portrait video doesn't get giant text;
+    # portrait captions sit higher, clear of Instagram's bottom UI overlay
+    base = min(w_res, h_res)
+    fs = round(base * (0.075 if style == "boxed" else 0.095))
     outline = max(2, round(fs * 0.06))
-    margin_v = round(h_res * 0.08)
+    margin_v = round(h_res * (0.20 if h_res > w_res else 0.08))
+    margin_h = round(w_res * 0.05)
 
     if style == "boxed":
         style_line = (f"Style: S,Roboto,{fs},&H00FFFFFF,&H00FFFFFF,&H00000000,"
                       f"&HA0000000,-1,0,0,0,100,100,0,0,3,{round(fs*0.25)},0,2,"
-                      f"40,40,{margin_v},1")
+                      f"{margin_h},{margin_h},{margin_v},1")
     elif style == "neon":
         style_line = (f"Style: S,Anton,{fs},&H00FFFFFF,&H00FFFFFF,&H00B3009E,"
                       f"&H00000000,0,0,0,0,100,100,1,0,1,{outline + 2},0,2,"
-                      f"40,40,{margin_v},1")
+                      f"{margin_h},{margin_h},{margin_v},1")
     else:  # classic, highlight
         style_line = (f"Style: S,Anton,{fs},&H00FFFFFF,&H00FFFFFF,&H00000000,"
                       f"&H80000000,0,0,0,0,100,100,1,0,1,{outline},2,2,"
-                      f"40,40,{margin_v},1")
+                      f"{margin_h},{margin_h},{margin_v},1")
 
     upper = style != "boxed"
     events = []

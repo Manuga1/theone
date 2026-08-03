@@ -87,18 +87,21 @@ def probe_audio(path):
 
 
 def trim_normalize(src, dst, offset, duration, use_audio, target_res=DEFAULT_RES,
-                   ass_path=None):
+                   ass_path=None, fill=False):
     """Trim src at offset for duration and re-encode to the uniform format.
 
     use_audio=False (or a source with no audio stream) gets a silent track so
     every intermediate has identical streams for stream-copy concat.
     ass_path, if given, burns those subtitles in during the same encode.
+    fill=True crops to fill the frame instead of letterboxing.
     """
     w, h = target_res
-    vf = (
-        f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
-        f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={TARGET_FPS}"
-    )
+    if fill:
+        vf = (f"scale={w}:{h}:force_original_aspect_ratio=increase,"
+              f"crop={w}:{h},setsar=1,fps={TARGET_FPS}")
+    else:
+        vf = (f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+              f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={TARGET_FPS}")
     if ass_path:
         vf += (f",ass=filename={_quote_filter_path(ass_path)}"
                f":fontsdir={_quote_filter_path(captions.FONTS_DIR)}")
@@ -171,7 +174,7 @@ def count_permutations(n, k):
 
 
 def generate(run_dir, clips, k, duration, progress_cb=None, music_paths=None,
-             caption_style=None, timeline_caption_words=None):
+             caption_style=None, timeline_caption_words=None, canvas="auto"):
     """Produce every ordered permutation of k clips as concatenated videos.
 
     clips: list of {"path": ..., "offset": seconds, "audio": bool,
@@ -212,12 +215,19 @@ def generate(run_dir, clips, k, duration, progress_cb=None, music_paths=None,
 
     paths = [c["path"] for c in clips]
     infos = [probe(p) for p in paths]
-    target_res = (
-        max((i["width"] for i in infos), default=DEFAULT_RES[0]),
-        max((i["height"] for i in infos), default=DEFAULT_RES[1]),
-    )
-    # libx264 requires even dimensions
-    target_res = (target_res[0] + target_res[0] % 2, target_res[1] + target_res[1] % 2)
+    # canvas: "auto" letterboxes everything onto a frame fitting all clips;
+    # "vertical" / "vertical_pad" force 1080x1920 (crop-to-fill vs letterbox)
+    fill = canvas == "vertical"
+    if canvas in ("vertical", "vertical_pad"):
+        target_res = (1080, 1920)
+    else:
+        target_res = (
+            max((i["width"] for i in infos), default=DEFAULT_RES[0]),
+            max((i["height"] for i in infos), default=DEFAULT_RES[1]),
+        )
+        # libx264 requires even dimensions
+        target_res = (target_res[0] + target_res[0] % 2,
+                      target_res[1] + target_res[1] % 2)
 
     # trimmed[i] is a list of k variants: the file to use when clip i sits at
     # each position. Without timeline captions all positions share one file.
@@ -243,12 +253,13 @@ def generate(run_dir, clips, k, duration, progress_cb=None, music_paths=None,
                     if plain is None:  # no words in this span: share one encode
                         plain = trimmed_dir / f"{idx:02d}_{stem}.mp4"
                         trim_normalize(clip["path"], plain, offset, window,
-                                       use_audio, target_res)
+                                       use_audio, target_res, fill=fill)
                     variants.append(plain)
                 else:
                     dst = trimmed_dir / f"{idx:02d}_p{pos}_{stem}.mp4"
                     trim_normalize(clip["path"], dst, offset, window,
-                                   use_audio, target_res, ass_path=ass_path)
+                                   use_audio, target_res, ass_path=ass_path,
+                                   fill=fill)
                     variants.append(dst)
             trimmed.append(variants)
         else:
@@ -263,7 +274,7 @@ def generate(run_dir, clips, k, duration, progress_cb=None, music_paths=None,
                     run_dir / f"cap_{idx:02d}.ass")
             dst = trimmed_dir / f"{idx:02d}_{stem}.mp4"
             trim_normalize(clip["path"], dst, offset, window,
-                           use_audio, target_res, ass_path=ass_path)
+                           use_audio, target_res, ass_path=ass_path, fill=fill)
             trimmed.append([dst] * k)
     if progress_cb:
         progress_cb("normalizing clips", len(clips), len(clips))
