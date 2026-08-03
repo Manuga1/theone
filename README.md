@@ -6,7 +6,10 @@ of k clips concatenated into a video. 5 clips with k=4 → 120 output videos.
 
 ## Setup
 
-Requires Python 3 and FFmpeg on PATH.
+Requires Python 3 and FFmpeg on PATH. Captions need an FFmpeg built
+with libass — on macOS, Homebrew's regular `ffmpeg` formula no longer
+includes it, so use `brew install ffmpeg-full`. Verify with
+`ffmpeg -filters | grep -w ass`.
 
 ```
 pip install -r requirements.txt
