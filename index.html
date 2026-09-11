@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>You're One Email Away — Networking &amp; Research</title>
+  <meta name="description" content="A talk on networking, research, and the cold-email mindset for the Waukee APEX Medical & BioScience Research group." />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='30' cy='30' r='12' fill='%230F766E'/%3E%3Ccircle cx='72' cy='50' r='10' fill='%230369A1'/%3E%3Ccircle cx='38' cy='76' r='9' fill='%230F766E'/%3E%3Cpath d='M30 30 72 50 38 76 30 30' fill='none' stroke='%230369A1' stroke-width='4'/%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <!-- Progress UI (populated by app.js) -->
+  <div class="progress-bar" aria-hidden="true"><div class="progress-bar-fill"></div></div>
+  <nav class="dots" aria-label="Slide navigation"></nav>
+  <div class="slide-counter" aria-hidden="true"><span class="current">1</span>&thinsp;/&thinsp;<span class="total">16</span></div>
+  <button class="advance" aria-label="Next slide">
+    <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+  </button>
+
+  <main id="deck">
+
+    <!-- 1 · TITLE -->
+    <section class="slide slide-title" id="s1" data-canvas>
+      <canvas class="net-canvas" aria-hidden="true"></canvas>
+      <div class="content">
+        <p class="kicker anim">Waukee APEX · Medical &amp; BioScience Research</p>
+        <h1 class="anim">You're One<br /><span class="grad-text">Email Away</span></h1>
+        <p class="subtitle anim">Networking, research, and the case for asking anyway</p>
+        <p class="byline anim">Maanas Garimella &middot; APEX Med &amp; BioSci Research alum</p>
+      </div>
+      <div class="notes">
+        <strong>~1 min.</strong> Welcome, thank Jared. One-liner: "Three years ago I was in your seat. Today I want to convince you of one thing: almost everything I've done since started with an email I was scared to send."
+      </div>
+    </section>
+
+    <!-- 2 · I SAT WHERE YOU'RE SITTING -->
+    <section class="slide" id="s2">
+      <div class="content">
+        <p class="kicker anim">Three years ago</p>
+        <h2 class="anim">I sat where you're sitting</h2>
+        <div class="cols anim">
+          <div class="card">
+            <div class="card-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
+            </div>
+            <h3>This exact program</h3>
+            <p>Junior year, Jared's class. Same chairs, same projects, same "what am I doing with my life" energy.</p>
+          </div>
+          <div class="card">
+            <div class="card-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+            </div>
+            <h3>My first exposure</h3>
+            <p>APEX was my introduction to real research, real professionals, and how pre-professional life actually works.</p>
+          </div>
+          <div class="card">
+            <div class="card-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></svg>
+            </div>
+            <h3>The launchpad</h3>
+            <p>Everything that came after traces back to skills and confidence that started right here.</p>
+          </div>
+        </div>
+      </div>
+      <div class="notes">
+        <strong>~2 min.</strong> Personal story: what you remember about being in the program — a project, a moment of doubt, what Jared told you. Make it concrete and a little self-deprecating. Land the point: "I wasn't a standout. This program just taught me how to start."
+      </div>
+    </section>
+
+    <!-- 3 · TIMELINE -->
+    <section class="slide" id="s3">
+      <div class="content wide">
+        <p class="kicker anim">Where that led</p>
+        <h2 class="anim">Three years later</h2>
+        <ol class="timeline anim">
+          <li><span class="tl-dot"></span><h3>Waukee APEX</h3><p>Med &amp; BioScience Research, junior year</p></li>
+          <li><span class="tl-dot"></span><h3>Two research labs</h3><p>Joined as an undergraduate researcher</p></li>
+          <li><span class="tl-dot"></span><h3>Neuroimaging research</h3><p>Studying the brain with real imaging data</p></li>
+          <li><span class="tl-dot"></span><h3>Three preprints</h3><p>Submitted for publication</p></li>
+          <li><span class="tl-dot"></span><h3>National collaborations</h3><p>Brigham and Women's &middot; Yale &middot; Vanderbilt</p></li>
+        </ol>
+        <p class="punchline anim">None of this required me to be special.<br /><strong>It required me to ask.</strong></p>
+      </div>
+      <div class="notes">
+        <strong>~2 min.</strong> Walk the timeline left to right. For each node, one sentence on how it happened — emphasize which ones started with a cold email or an introduction. Don't rush the punchline; pause after it.
+      </div>
+    </section>
+
+    <!-- 4 · DIVIDER: WHY RESEARCH -->
+    <section class="slide slide-divider" id="s4">
+      <svg class="ekg" viewBox="0 0 600 60" preserveAspectRatio="none" aria-hidden="true"><path d="M0 30 H180 L200 30 210 10 225 50 240 30 H600" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+      <div class="content">
+        <p class="kicker anim">Part one</p>
+        <h2 class="anim">Research isn't just for<br />"future scientists"</h2>
+        <p class="subtitle anim">Whatever you're aiming at, it pays off. Here's how.</p>
+      </div>
+      <div class="notes">
+        <strong>~30 sec.</strong> Transition: "Before the networking part — why bother with research at all? Quick show of hands: who's thinking pre-med? Who's thinking research/PhD? Who has no idea? Good — there's a slide for each of you."
+      </div>
+    </section>
+
+    <!-- 5 · PRE-MED -->
+    <section class="slide" id="s5">
+      <div class="content">
+        <p class="kicker anim">If you're an aspiring physician</p>
+        <h2 class="anim">Research is the differentiator</h2>
+        <ul class="biglist anim">
+          <li><strong>Med schools expect it.</strong> Research experience is one of the most common threads among successful applicants.</li>
+          <li><strong>Medicine <em>is</em> research.</strong> Every drug, protocol, and guideline you'll ever use started as somebody's study. Understanding how evidence is made makes you a better clinician.</li>
+          <li><strong>It opens clinical doors.</strong> Labs connect you to physicians, hospitals, shadowing, and mentors years before you'd otherwise meet them.</li>
+        </ul>
+      </div>
+      <div class="notes">
+        <strong>~1.5 min.</strong> If you have a stat or anecdote from your own labs about physicians you've worked with, use it here. Point: research isn't a checkbox — it's how you learn to read medicine critically.
+      </div>
+    </section>
+
+    <!-- 6 · PHD / RESEARCHER -->
+    <section class="slide" id="s6">
+      <div class="content">
+        <p class="kicker anim">If you're an aspiring researcher or PhD</p>
+        <h2 class="anim">Start before you're "ready"</h2>
+        <ul class="biglist anim">
+          <li><strong>Authorship compounds.</strong> Starting in high school or early college means publications, posters, and letters years ahead of the curve.</li>
+          <li><strong>Mentors change trajectories.</strong> One PI who believes in you is worth more than any GPA point.</li>
+          <li><strong>Try before you commit.</strong> A PhD is a 5+ year decision. Working in a real lab now tells you whether you actually love the day-to-day — before it costs you anything.</li>
+        </ul>
+      </div>
+      <div class="notes">
+        <strong>~1.5 min.</strong> Your preprints are the proof here — three submitted before most people write their first. Be honest about the grind too: rejection, revisions, slow cycles.
+      </div>
+    </section>
+
+    <!-- 7 · EVERYONE ELSE -->
+    <section class="slide" id="s7">
+      <div class="content">
+        <p class="kicker anim">If you're neither — or not sure yet</p>
+        <h2 class="anim">Research is a critical-thinking gym</h2>
+        <div class="cols anim">
+          <div class="card"><h3>Read hard things</h3><p>Dense papers stop being scary. That skill transfers to law, business, engineering — everything.</p></div>
+          <div class="card"><h3>Ask real questions</h3><p>You learn to turn "that's interesting" into a testable, answerable question.</p></div>
+          <div class="card"><h3>Sit with ambiguity</h3><p>Most experiments fail or half-work. You get comfortable not knowing — and finding out.</p></div>
+          <div class="card"><h3>Defend your reasoning</h3><p>Lab meetings teach you to make a claim, back it with evidence, and take criticism without flinching.</p></div>
+        </div>
+      </div>
+      <div class="notes">
+        <strong>~1.5 min.</strong> This is the slide for the undecided kids — don't skip it. "Even if you never set foot in a lab again, one year of research rewires how you think."
+      </div>
+    </section>
+
+    <!-- 8 · WHAT IT ACTUALLY LOOKS LIKE -->
+    <section class="slide" id="s8">
+      <div class="content">
+        <p class="kicker anim">Demystified</p>
+        <h2 class="anim">What research actually looks like</h2>
+        <div class="split anim">
+          <div class="split-col">
+            <h3 class="split-label no">What people imagine</h3>
+            <ul class="plain">
+              <li>Geniuses in lab coats</li>
+              <li>Eureka moments daily</li>
+              <li>You need to know everything first</li>
+            </ul>
+          </div>
+          <div class="split-col">
+            <h3 class="split-label yes">What it really is</h3>
+            <ul class="plain">
+              <li>Reading papers &amp; asking questions</li>
+              <li>Cleaning data, running analyses, meetings</li>
+              <li>Slow, steady progress — <strong>learnable by anyone</strong></li>
+            </ul>
+          </div>
+        </div>
+        <p class="punchline anim">It's not genius-gated. It's <strong>effort-gated.</strong></p>
+      </div>
+      <div class="notes">
+        <strong>~1.5 min.</strong> Describe your actual week in the lab — the unglamorous parts. This lowers the barrier: nobody in the room should think "that's not for people like me."
+      </div>
+    </section>
+
+    <!-- 9 · DIVIDER: NETWORKING -->
+    <section class="slide slide-divider" id="s9">
+      <svg class="ekg" viewBox="0 0 600 60" preserveAspectRatio="none" aria-hidden="true"><path d="M0 30 H180 L200 30 210 10 225 50 240 30 H600" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+      <div class="content">
+        <p class="kicker anim">Part two</p>
+        <h2 class="anim">Opportunities move<br />through people</h2>
+        <p class="subtitle anim">The best positions are never posted. Someone tells someone about you.</p>
+      </div>
+      <div class="notes">
+        <strong>~30 sec.</strong> Transition into networking. "Every lab seat I've had, someone had to say yes to a person they barely knew. That's what networking actually is — becoming easy to say yes to."
+      </div>
+    </section>
+
+    <!-- 10 · NETWORKING ≠ SCHMOOZING -->
+    <section class="slide" id="s10">
+      <div class="content">
+        <p class="kicker anim">Redefined</p>
+        <h2 class="anim">Networking &ne; schmoozing</h2>
+        <div class="cols anim">
+          <div class="card"><h3>It's curiosity</h3><p>Asking people genuine questions about their work. People love talking about what they do — let them.</p></div>
+          <div class="card"><h3>It's follow-through</h3><p>Sending the thank-you note. Circling back in a month with what you did with their advice.</p></div>
+          <div class="card"><h3>It's being easy to help</h3><p>Specific asks, quick replies, doing what you said you'd do. Helpable people get helped.</p></div>
+        </div>
+        <p class="punchline anim">You're not extracting favors.<br /><strong>You're starting relationships.</strong></p>
+      </div>
+      <div class="notes">
+        <strong>~2 min.</strong> Kill the "networking is fake/icky" objection head-on. Story: a relationship you kept warm that paid off much later. Mention that your collaborators at Brigham &amp; Women's / Yale / Vanderbilt are relationships, not transactions.
+      </div>
+    </section>
+
+    <!-- 11 · COLD EMAIL MINDSET -->
+    <section class="slide slide-mindset" id="s11">
+      <div class="content">
+        <p class="kicker anim">The mindset</p>
+        <h2 class="anim">You can do anything you want to do</h2>
+        <div class="split anim">
+          <div class="split-col">
+            <h3 class="split-label">Worst case</h3>
+            <p class="bigstat">No reply.</p>
+            <p>Which costs you… nothing. You're exactly where you started.</p>
+          </div>
+          <div class="split-col">
+            <h3 class="split-label yes">Best case</h3>
+            <p class="bigstat">Everything.</p>
+            <p>A lab seat. A mentor. A recommendation letter. A career path you didn't know existed.</p>
+          </div>
+        </div>
+        <ul class="biglist anim">
+          <li><strong>Researchers want interested students.</strong> A thoughtful email from a motivated high schooler is rare — and memorable.</li>
+          <li><strong>My labs trace back to unsolicited asks.</strong> Nobody came looking for me. I showed up in inboxes.</li>
+          <li><strong>The asymmetry is absurd.</strong> Five minutes of courage, potentially years of payoff. Send the email.</li>
+        </ul>
+      </div>
+      <div class="notes">
+        <strong>~2 min.</strong> This is the heart of the talk — slow down. Tell the story of ONE specific email you almost didn't send and what it turned into. Acknowledge the fear is real; the trick is sending it anyway.
+      </div>
+    </section>
+
+    <!-- 12 · ANATOMY OF A COLD EMAIL -->
+    <section class="slide" id="s12">
+      <div class="content wide">
+        <p class="kicker anim">The craft</p>
+        <h2 class="anim">Anatomy of a cold email</h2>
+        <div class="email-wrap anim">
+          <div class="email-card" role="img" aria-label="Annotated example cold email">
+            <div class="email-header">
+              <p><span class="email-meta">To:</span> dr.rivera@university.edu</p>
+              <p><span class="email-meta">Subject:</span> Question about your sleep &amp; memory fMRI study — Waukee APEX student <span class="tag tag-1">1</span></p>
+            </div>
+            <div class="email-body">
+              <p>Dear Dr. Rivera,</p>
+              <p>I'm Sarah Chen, a junior in Waukee APEX's Medical &amp; BioScience Research program in Iowa. <span class="tag tag-2">2</span></p>
+              <p>I recently read your paper on hippocampal activity during sleep consolidation, and the finding that targeted memory reactivation strengthened recall stuck with me — I've been trying to design a small study on sleep and learning myself. <span class="tag tag-3">3</span></p>
+              <p>Would you be open to answering two short questions over email about how your lab designs imaging studies? I'd be grateful for even a brief reply. <span class="tag tag-4">4</span></p>
+              <p>I completely understand if you're too busy — thank you for reading either way. <span class="tag tag-5">5</span></p>
+              <p>Sarah Chen</p>
+            </div>
+          </div>
+          <ol class="email-legend">
+            <li><span class="tag tag-1">1</span><div><strong>Specific subject line</strong><br />Names their actual work + who you are. Never "Opportunity inquiry."</div></li>
+            <li><span class="tag tag-2">2</span><div><strong>Who you are, one line</strong><br />Enough context to place you. No life story.</div></li>
+            <li><span class="tag tag-3">3</span><div><strong>Proof you did homework</strong><br />Reference something <em>they</em> made. This is what separates you from spam.</div></li>
+            <li><span class="tag tag-4">4</span><div><strong>One small, concrete ask</strong><br />Easy to say yes to. Not "can I work in your lab" on email one.</div></li>
+            <li><span class="tag tag-5">5</span><div><strong>Easy out + gratitude</strong><br />Respect their time. It reads as maturity.</div></li>
+          </ol>
+        </div>
+      </div>
+      <div class="notes">
+        <strong>~2.5 min.</strong> Walk the five parts in order. (Names in the example are fictional.) Emphasize #3 — the homework line — as the single highest-leverage sentence. Under 150 words total; busy people read short emails first.
+      </div>
+    </section>
+
+    <!-- 13 · DO / DON'T -->
+    <section class="slide" id="s13">
+      <div class="content">
+        <p class="kicker anim">Ground rules</p>
+        <h2 class="anim">Do / Don't</h2>
+        <div class="split anim">
+          <div class="split-col">
+            <h3 class="split-label yes">Do</h3>
+            <ul class="plain check">
+              <li>Keep it under ~150 words</li>
+              <li>Make one specific, small ask</li>
+              <li>Reference their actual work</li>
+              <li>Use your school email &amp; proofread</li>
+              <li>Follow up once after ~1 week</li>
+            </ul>
+          </div>
+          <div class="split-col">
+            <h3 class="split-label no">Don't</h3>
+            <ul class="plain cross">
+              <li>Send a wall of text or your résumé</li>
+              <li>Ask "are there any opportunities?"</li>
+              <li>Copy-paste the same email to 50 people</li>
+              <li>Attach files on the first email</li>
+              <li>Take silence personally — people are busy</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div class="notes">
+        <strong>~1.5 min.</strong> Quick-fire slide. On the follow-up point: one polite bump doubles your odds; five bumps gets you blocked. On silence: a non-reply is almost never about you.
+      </div>
+    </section>
+
+    <!-- 14 · ACTIVITY INTRO -->
+    <section class="slide slide-activity" id="s14">
+      <div class="content">
+        <p class="kicker anim">Your turn &middot; ~8 minutes</p>
+        <h2 class="anim">Draft your cold email</h2>
+        <ol class="steps anim">
+          <li><strong>Pick your field.</strong> The career you want — or are just curious about.</li>
+          <li><strong>Find one real person.</strong> A researcher, physician, or professional you'd genuinely want to learn from.<br /><span class="hint">Try: university lab pages &middot; Google Scholar &middot; hospital directories &middot; LinkedIn</span></li>
+          <li><strong>Find their email.</strong> University directory, lab website, or the corresponding-author line on a paper.</li>
+          <li><strong>Draft it.</strong> Use the template on the next slide. Aim for under 150 words.</li>
+        </ol>
+      </div>
+      <div class="notes">
+        <strong>~1 min setup, then ~8 min work time.</strong> Everyone drafts a REAL email to a REAL person. Phones/laptops out. Circulate and help people find names. Offer: "If you send it this week, email me and tell me what happened."
+      </div>
+    </section>
+
+    <!-- 15 · TEMPLATE -->
+    <section class="slide" id="s15">
+      <div class="content wide">
+        <p class="kicker anim">Keep this slide up while you write</p>
+        <h2 class="anim">The template</h2>
+        <div class="email-wrap anim">
+          <div class="email-card template-card">
+            <div class="email-header">
+              <p><span class="email-meta">Subject:</span> <span class="blank">[Their specific work]</span> — question from a Waukee APEX student</p>
+            </div>
+            <div class="email-body">
+              <p>Dear Dr. <span class="blank">[Last name]</span>,</p>
+              <p><span class="tpl-n">1</span> I'm <span class="blank">[name]</span>, a <span class="blank">[year]</span> in Waukee APEX's Medical &amp; BioScience Research program.</p>
+              <p><span class="tpl-n">2</span> I came across your <span class="blank">[paper / project / talk]</span> on <span class="blank">[topic]</span>, and <span class="blank">[the specific thing that interested you]</span>.</p>
+              <p><span class="tpl-n">3</span> Would you be open to <span class="blank">[one small ask: two questions by email / a 15-minute call / advice on X]</span>?</p>
+              <p><span class="tpl-n">4</span> I completely understand if you're busy — thank you either way.</p>
+              <p><span class="blank">[Your name]</span></p>
+            </div>
+          </div>
+          <div class="checklist">
+            <h3>Before you hit send</h3>
+            <ul class="plain check">
+              <li>Under 150 words?</li>
+              <li>Their name spelled correctly?</li>
+              <li>Exactly one ask?</li>
+              <li>Something only <em>they</em> could have written about?</li>
+              <li>No attachments?</li>
+              <li>Reminder set to follow up in a week?</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div class="notes">
+        <strong>Work-time slide.</strong> Stay here while students draft. With ~2 min left, ask for a volunteer to read theirs aloud and workshop it kindly against the checklist.
+      </div>
+    </section>
+
+    <!-- 16 · CLOSE -->
+    <section class="slide slide-title slide-close" id="s16" data-canvas>
+      <canvas class="net-canvas" aria-hidden="true"></canvas>
+      <div class="content">
+        <p class="kicker anim">One last thing</p>
+        <h2 class="anim">Send it.</h2>
+        <p class="subtitle anim">The people you admire answer their email.<br />You can do anything you want to do — <strong>but you have to ask.</strong></p>
+        <p class="byline anim">Maanas Garimella &middot; questions welcome, anytime<br /><span class="thanks">Thank you, Jared &amp; the APEX Med &amp; BioSci Research program</span></p>
+      </div>
+      <div class="notes">
+        <strong>~1 min.</strong> Close the loop: "Three years ago this program taught me to start. The email you just drafted might be your version of that. Send it this week." Give your contact info out loud, thank Jared, open Q&amp;A.
+      </div>
+    </section>
+
+  </main>
+
+  <div class="notes-hint" aria-hidden="true">Press <kbd>N</kbd> for speaker notes &middot; <kbd>↑</kbd><kbd>↓</kbd> to navigate</div>
+
+  <script src="app.js"></script>
+</body>
+</html>
