@@ -186,7 +186,7 @@ h3 { font-size: 1.15rem; font-weight: 600; margin-bottom: 0.35rem; }
 .timeline {
   list-style: none;
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   gap: 0.8rem;
   margin-top: 2.2rem;
   position: relative;
