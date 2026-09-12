@@ -2,7 +2,7 @@
 
 A scrollable slide-deck website for a 20–30 minute talk to the Waukee APEX Medical & BioScience Research group — on networking, the benefits of research, and the cold-email "you can do anything you want to do" mindset. Includes an interactive portion where students draft a cold email to a potential connection.
 
-Plain HTML/CSS/JS — no build step, no dependencies.
+Plain HTML/CSS/JS — no build step. Three.js (MIT, vendored in `vendor/`) powers the scroll-driven 3D brain background: a stylized neural point-cloud brain that assembles on load, rotates as you scroll, and breaks apart into anatomical parts on section dividers and the closing slide. A `mix-blend-mode: difference` custom cursor inverts whatever it passes over (desktop only), and the timeline slide temporarily turns vertical scrolling into a horizontal card ride from APEX to Vanderbilt sophomore year before the page resumes downward.
 
 ## Presenting
 

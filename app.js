@@ -27,39 +27,117 @@
   }
 
   function setCurrent(i) {
+    if (i === current && dots[i].classList.contains("active")) return;
     current = i;
     dots.forEach((d, j) => d.classList.toggle("active", j === i));
     counterCurrent.textContent = i + 1;
-    barFill.style.width = `${((i + 1) / slides.length) * 100}%`;
     advanceBtn.classList.toggle("hidden", i === slides.length - 1);
     document.body.classList.toggle("on-dark", slides[i].classList.contains("slide-divider"));
   }
 
-  /* ---- Observe slides: entrance animations + active tracking ---- */
+  /* ---- Entrance animations ---- */
   const observer = new IntersectionObserver(
-    (entries) => {
-      entries.forEach((entry) => {
-        if (entry.isIntersecting) {
-          entry.target.classList.add("in-view");
-          setCurrent(slides.indexOf(entry.target));
-        }
-      });
-    },
-    { threshold: 0.55 }
+    (entries) => entries.forEach((e) => e.isIntersecting && e.target.classList.add("in-view")),
+    { threshold: 0.15 }
   );
   slides.forEach((s) => observer.observe(s));
 
-  /* ---- Keyboard navigation ---- */
+  /* ---- Horizontal section scroller ---- */
+  const hs = document.querySelector(".hscroll");
+  const hsTrack = hs && hs.querySelector(".hs-track");
+  const hsViewport = hs && hs.querySelector(".hs-viewport");
+  const hsFill = hs && hs.querySelector(".hs-progress-fill");
+  const hsCards = hs ? hs.querySelectorAll(".hs-card").length : 0;
+  const hsIndex = hs ? slides.indexOf(hs) : -1;
+
+  function hsScrollable() {
+    return hs.offsetHeight - window.innerHeight;
+  }
+
+  function updateHscroll() {
+    if (!hs) return;
+    const scrollable = hsScrollable();
+    if (scrollable <= 0) return;
+    const pos = window.scrollY - hs.offsetTop;
+    const prog = Math.max(0, Math.min(1, pos / scrollable));
+    const span = hsTrack.scrollWidth - hsViewport.clientWidth;
+    hsTrack.style.transform = `translate3d(${(-prog * Math.max(0, span)).toFixed(1)}px, 0, 0)`;
+    hsFill.style.width = `${(prog * 100).toFixed(2)}%`;
+  }
+
+  /* ---- Scroll tracking: active slide + top progress bar ---- */
+  let ticking = false;
+  function onScroll() {
+    if (ticking) return;
+    ticking = true;
+    requestAnimationFrame(() => {
+      ticking = false;
+      const doc = document.documentElement;
+      const overall = doc.scrollHeight > window.innerHeight
+        ? window.scrollY / (doc.scrollHeight - window.innerHeight)
+        : 1;
+      barFill.style.width = `${(overall * 100).toFixed(2)}%`;
+
+      const cy = window.innerHeight / 2;
+      for (let i = 0; i < slides.length; i++) {
+        const r = slides[i].getBoundingClientRect();
+        if (r.top <= cy && r.bottom > cy) {
+          setCurrent(i);
+          break;
+        }
+      }
+      updateHscroll();
+    });
+  }
+  window.addEventListener("scroll", onScroll, { passive: true });
+  window.addEventListener("resize", onScroll);
+  onScroll();
+
+  /* ---- Keyboard navigation (steps through the horizontal timeline) ---- */
+  function smoothScrollTo(top) {
+    window.scrollTo({ top, behavior: reducedMotion ? "auto" : "smooth" });
+  }
+
+  function next() {
+    if (current === hsIndex) {
+      const scrollable = hsScrollable();
+      const pos = window.scrollY - hs.offsetTop;
+      if (pos < scrollable - 4) {
+        const step = scrollable / (hsCards - 1);
+        smoothScrollTo(hs.offsetTop + Math.min(pos + step, scrollable));
+        return;
+      }
+    }
+    goTo(current + 1);
+  }
+
+  function prev() {
+    if (current === hsIndex) {
+      const pos = window.scrollY - hs.offsetTop;
+      if (pos > 4) {
+        const step = hsScrollable() / (hsCards - 1);
+        smoothScrollTo(hs.offsetTop + Math.max(pos - step, 0));
+        return;
+      }
+    }
+    if (current - 1 === hsIndex) {
+      // entering the timeline from below: land on its last card
+      smoothScrollTo(hs.offsetTop + hsScrollable());
+      return;
+    }
+    goTo(current - 1);
+  }
+
   const NEXT_KEYS = ["ArrowDown", "ArrowRight", "PageDown", " ", "Spacebar"];
   const PREV_KEYS = ["ArrowUp", "ArrowLeft", "PageUp"];
   document.addEventListener("keydown", (e) => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (NEXT_KEYS.includes(e.key)) {
       e.preventDefault();
-      goTo(current + 1);
+      next();
     } else if (PREV_KEYS.includes(e.key)) {
       e.preventDefault();
-      goTo(current - 1);
+      prev();
     } else if (e.key === "Home") {
       e.preventDefault();
       goTo(0);
@@ -71,94 +149,44 @@
     }
   });
 
-  advanceBtn.addEventListener("click", () => goTo(current + 1));
+  advanceBtn.addEventListener("click", next);
 
-  /* ---- Animated network background (title + close slides) ---- */
-  if (!reducedMotion) {
-    document.querySelectorAll("[data-canvas] .net-canvas").forEach(initNetwork);
-  }
+  /* ---- Inversion cursor (fine pointers only) ---- */
+  const finePointer = window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+  const dot = document.querySelector(".cursor-dot");
+  const ring = document.querySelector(".cursor-ring");
+  if (finePointer && dot && ring && !reducedMotion) {
+    document.body.classList.add("custom-cursor");
+    let mx = innerWidth / 2, my = innerHeight / 2;
+    let rx = mx, ry = my;
+    let shown = false;
 
-  function initNetwork(canvas) {
-    const ctx = canvas.getContext("2d");
-    const isDark = canvas.closest(".slide-divider") !== null;
-    let nodes = [];
-    let w = 0;
-    let h = 0;
-    let raf = null;
-
-    function resize() {
-      const rect = canvas.parentElement.getBoundingClientRect();
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      w = rect.width;
-      h = rect.height;
-      canvas.width = w * dpr;
-      canvas.height = h * dpr;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      const count = Math.max(24, Math.min(64, Math.floor((w * h) / 26000)));
-      nodes = Array.from({ length: count }, () => ({
-        x: Math.random() * w,
-        y: Math.random() * h,
-        vx: (Math.random() - 0.5) * 0.35,
-        vy: (Math.random() - 0.5) * 0.35,
-        r: 1.5 + Math.random() * 2,
-      }));
-    }
-
-    function tick() {
-      ctx.clearRect(0, 0, w, h);
-      const linkDist = Math.min(w, h) * 0.22;
-      const stroke = isDark ? "255,255,255" : "15,118,110";
-      const fill = isDark ? "255,255,255" : "3,105,161";
-
-      for (let i = 0; i < nodes.length; i++) {
-        const a = nodes[i];
-        a.x += a.vx;
-        a.y += a.vy;
-        if (a.x < 0 || a.x > w) a.vx *= -1;
-        if (a.y < 0 || a.y > h) a.vy *= -1;
-
-        for (let j = i + 1; j < nodes.length; j++) {
-          const b = nodes[j];
-          const dx = a.x - b.x;
-          const dy = a.y - b.y;
-          const dist = Math.hypot(dx, dy);
-          if (dist < linkDist) {
-            ctx.strokeStyle = `rgba(${stroke},${(0.16 * (1 - dist / linkDist)).toFixed(3)})`;
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(a.x, a.y);
-            ctx.lineTo(b.x, b.y);
-            ctx.stroke();
-          }
-        }
+    document.addEventListener("mousemove", (e) => {
+      mx = e.clientX;
+      my = e.clientY;
+      if (!shown) {
+        shown = true;
+        dot.style.opacity = "1";
+        ring.style.opacity = "1";
       }
-      for (const n of nodes) {
-        ctx.fillStyle = `rgba(${fill},0.35)`;
-        ctx.beginPath();
-        ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      raf = requestAnimationFrame(tick);
-    }
-
-    /* Only animate while the slide is on screen */
-    const vis = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting && raf === null) {
-            raf = requestAnimationFrame(tick);
-          } else if (!entry.isIntersecting && raf !== null) {
-            cancelAnimationFrame(raf);
-            raf = null;
-          }
-        });
-      },
-      { threshold: 0.05 }
-    );
-
-    resize();
-    window.addEventListener("resize", resize);
-    raf = null;
-    vis.observe(canvas.closest(".slide"));
+      dot.style.transform = `translate(${mx}px, ${my}px)`;
+    });
+    document.addEventListener("mouseleave", () => {
+      shown = false;
+      dot.style.opacity = "0";
+      ring.style.opacity = "0";
+    });
+    document.addEventListener("mouseover", (e) => {
+      ring.classList.toggle("cursor-grow", !!e.target.closest("button, a, kbd"));
+    });
+    (function follow() {
+      rx += (mx - rx) * 0.16;
+      ry += (my - ry) * 0.16;
+      ring.style.transform = `translate(${rx.toFixed(1)}px, ${ry.toFixed(1)}px)`;
+      requestAnimationFrame(follow);
+    })();
+  } else {
+    dot && dot.remove();
+    ring && ring.remove();
   }
 })();

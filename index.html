@@ -13,6 +13,15 @@
 </head>
 <body>
 
+  <!-- Ambient background layers -->
+  <div class="blob blob-1" aria-hidden="true"></div>
+  <div class="blob blob-2" aria-hidden="true"></div>
+  <canvas id="brain-canvas" aria-hidden="true"></canvas>
+
+  <!-- Inversion cursor -->
+  <div class="cursor-dot" aria-hidden="true"></div>
+  <div class="cursor-ring" aria-hidden="true"></div>
+
   <!-- Progress UI (populated by app.js) -->
   <div class="progress-bar" aria-hidden="true"><div class="progress-bar-fill"></div></div>
   <nav class="dots" aria-label="Slide navigation"></nav>
@@ -24,13 +33,12 @@
   <main id="deck">
 
     <!-- 1 · TITLE -->
-    <section class="slide slide-title" id="s1" data-canvas>
-      <canvas class="net-canvas" aria-hidden="true"></canvas>
+    <section class="slide slide-title" id="s1">
       <div class="content">
         <p class="kicker anim">Waukee APEX · Medical &amp; BioScience Research</p>
         <h1 class="anim">You're One<br /><span class="grad-text">Email Away</span></h1>
         <p class="subtitle anim">Networking, research, and the case for asking anyway</p>
-        <p class="byline anim">Maanas Garimella &middot; APEX Med &amp; BioSci Research alum</p>
+        <p class="byline anim">Maanas Garimella &middot; Vanderbilt sophomore &middot; APEX Med &amp; BioSci Research alum</p>
       </div>
       <div class="notes">
         <strong>~1 min.</strong> Welcome, thank Jared. One-liner: "Three years ago I was in your seat. Today I want to convince you of one thing: almost everything I've done since started with an email I was scared to send."
@@ -71,23 +79,51 @@
       </div>
     </section>
 
-    <!-- 3 · TIMELINE -->
-    <section class="slide" id="s3">
-      <div class="content wide">
-        <p class="kicker anim">Where that led</p>
-        <h2 class="anim">Three years later</h2>
-        <ol class="timeline anim">
-          <li><span class="tl-dot"></span><h3>Waukee APEX</h3><p>Med &amp; BioScience Research, junior year</p></li>
-          <li><span class="tl-dot"></span><h3>Full-ride scholarship</h3><p>Networked my way into it</p></li>
-          <li><span class="tl-dot"></span><h3>Two research labs</h3><p>Including the Darby Lab — networked into that too</p></li>
-          <li><span class="tl-dot"></span><h3>Neuroimaging research</h3><p>Studying the brain with real imaging data</p></li>
-          <li><span class="tl-dot"></span><h3>Three preprints</h3><p>Submitted for publication</p></li>
-          <li><span class="tl-dot"></span><h3>National collaborations</h3><p>Brigham and Women's &middot; Yale &middot; Vanderbilt</p></li>
-        </ol>
-        <p class="punchline anim">None of this required me to be special.<br /><strong>It required me to ask.</strong></p>
-      </div>
-      <div class="notes">
-        <strong>~2 min.</strong> Walk the timeline left to right. Two nodes to slow down on: the full ride (tell the short version of how a relationship — not just an application — got you there) and the Darby Lab (the ask that got you in the door). Don't rush the punchline; pause after it.
+    <!-- 3 · TIMELINE (horizontal scroller) -->
+    <section class="slide hscroll" id="s3">
+      <div class="hscroll-sticky">
+        <div class="hs-head">
+          <p class="kicker anim">Where that led &middot; keep scrolling to travel</p>
+          <h2 class="anim">Three years, start to now</h2>
+        </div>
+        <div class="hs-viewport">
+          <div class="hs-track">
+            <article class="hs-card">
+              <span class="hs-year">2023</span>
+              <h3>Waukee APEX</h3>
+              <p>Medical &amp; BioScience Research, junior year. Jared's class — my introduction to research, networking, and everything pre-professional.</p>
+            </article>
+            <article class="hs-card">
+              <span class="hs-year">2024</span>
+              <h3>The full ride</h3>
+              <p>Networked my way into a full-ride scholarship. Relationships opened the door — the application just walked through it.</p>
+            </article>
+            <article class="hs-card">
+              <span class="hs-year">2025</span>
+              <h3>Vanderbilt, year one</h3>
+              <p>Showed up on campus and started asking. Networked my way into the Darby Lab — and a second lab after that.</p>
+            </article>
+            <article class="hs-card">
+              <span class="hs-year">2025–26</span>
+              <h3>Neuroimaging research</h3>
+              <p>Two labs, real imaging data, real questions about the brain.</p>
+            </article>
+            <article class="hs-card">
+              <span class="hs-year">2026</span>
+              <h3>Three preprints</h3>
+              <p>Submitted for publication, with collaborators at Brigham and Women's, Yale, and Vanderbilt.</p>
+            </article>
+            <article class="hs-card hs-card-accent">
+              <span class="hs-year">Today</span>
+              <h3>Vanderbilt sophomore</h3>
+              <p>None of this required me to be special.<br /><strong>It required me to ask.</strong></p>
+            </article>
+          </div>
+        </div>
+        <div class="hs-progress" aria-hidden="true"><div class="hs-progress-fill"></div></div>
+        <div class="notes">
+          <strong>~2–3 min.</strong> The page scrolls sideways here — ride it card by card. Slow down on the full ride (how a relationship, not just an application, got you there) and the Darby Lab (the ask that got you in the door). Pause after the final card's punchline.
+        </div>
       </div>
     </section>
 
@@ -363,8 +399,7 @@
     </section>
 
     <!-- 16 · CLOSE -->
-    <section class="slide slide-title slide-close" id="s16" data-canvas>
-      <canvas class="net-canvas" aria-hidden="true"></canvas>
+    <section class="slide slide-title slide-close" id="s16">
       <div class="content">
         <p class="kicker anim">One last thing</p>
         <h2 class="anim">Send it.</h2>
@@ -381,5 +416,6 @@
   <div class="notes-hint" aria-hidden="true">Press <kbd>N</kbd> for speaker notes &middot; <kbd>↑</kbd><kbd>↓</kbd> to navigate</div>
 
   <script src="app.js"></script>
+  <script type="module" src="brain.js"></script>
 </body>
 </html>
