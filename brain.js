@@ -141,6 +141,7 @@ function init() {
   let offsetX = 0;
   let offsetY = -0.9;
   let fade = 0;      // canvas opacity
+  let bright = 0;    // point/line brightening over dark sections
   let lastExplodeDrawn = -1;
 
   function centerSlide() {
@@ -155,12 +156,13 @@ function init() {
   function targets() {
     const s = centerSlide();
     const narrow = window.innerWidth < 760;
+    const dark = s.classList.contains("slide-dark") ? 1 : 0;
     let e = 0, x = 0, y = 0, f = narrow ? 0.22 : 0.5;
     if (s.classList.contains("slide-divider")) e = 1.1;
-    else if (s.id === "s16") { e = 1.5; f = narrow ? 0.3 : 0.75; }
+    else if (s.id === "s16") { e = 1.5; f = narrow ? 0.35 : 0.85; }
     else if (s.id === "s1") { f = narrow ? 0.3 : 0.6; y = -0.9; }
-    else if (!narrow && !s.classList.contains("slide-title")) x = 2.1;
-    return { e, x, y, f };
+    else if (!narrow && !s.classList.contains("slide-title") && !s.classList.contains("pin-section")) x = 2.1;
+    return { e, x, y, f, dark };
   }
 
   function applyPositions() {
@@ -201,15 +203,32 @@ function init() {
       : 0;
 
     const tg = targets();
-    explode += (tg.e - explode) * 0.055;
-    offsetX += (tg.x - offsetX) * 0.06;
-    offsetY += (tg.y - offsetY) * 0.06;
-    fade += (tg.f - fade) * 0.06;
+    const pinProg = typeof window.__pinProgress === "number" ? window.__pinProgress : null;
 
-    group.rotation.y = p * Math.PI * 4 + t * 0.06;
-    group.rotation.x = 0.25 + Math.sin(p * Math.PI * 2) * 0.12;
+    if (pinProg !== null) {
+      // Pinned showcase: pure scroll scrubbing (flipbook principle) — state is
+      // an exact function of scroll position, so reversing perfectly rebuilds
+      explode = Math.max(0, 1.6 * (1 - pinProg * 2.2));
+      offsetX += (0 - offsetX) * 0.12;
+      offsetY += (0.15 - offsetY) * 0.12;
+      fade += ((window.innerWidth < 760 ? 0.3 : 0.95) - fade) * 0.1;
+      group.rotation.y = 0.4 + pinProg * Math.PI * 3;
+      group.rotation.x = 0.3 + pinProg * 0.35;
+    } else {
+      explode += (tg.e - explode) * 0.055;
+      offsetX += (tg.x - offsetX) * 0.06;
+      offsetY += (tg.y - offsetY) * 0.06;
+      fade += (tg.f - fade) * 0.06;
+      group.rotation.y = p * Math.PI * 4 + t * 0.06;
+      group.rotation.x = 0.25 + Math.sin(p * Math.PI * 2) * 0.12;
+    }
+
+    bright += (tg.dark - bright) * 0.07;
+    points.material.color.setScalar(1 + bright * 1.7);
+    lines.material.opacity = 0.16 + bright * 0.22;
+
     group.position.x = offsetX;
-    group.position.y = offsetY + Math.sin(t * 0.5) * 0.08;
+    group.position.y = offsetY + (pinProg !== null ? 0 : Math.sin(t * 0.5) * 0.08);
     canvas.style.opacity = fade.toFixed(3);
 
     if (Math.abs(explode - lastExplodeDrawn) > 0.0008) {

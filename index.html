@@ -8,12 +8,13 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='30' cy='30' r='12' fill='%230F766E'/%3E%3Ccircle cx='72' cy='50' r='10' fill='%230369A1'/%3E%3Ccircle cx='38' cy='76' r='9' fill='%230F766E'/%3E%3Cpath d='M30 30 72 50 38 76 30 30' fill='none' stroke='%230369A1' stroke-width='4'/%3E%3C/svg%3E" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
 
   <!-- Ambient background layers -->
+  <div class="vignette" aria-hidden="true"></div>
   <div class="blob blob-1" aria-hidden="true"></div>
   <div class="blob blob-2" aria-hidden="true"></div>
   <canvas id="brain-canvas" aria-hidden="true"></canvas>
@@ -128,7 +129,7 @@
     </section>
 
     <!-- 4 · DIVIDER: WHY RESEARCH -->
-    <section class="slide slide-divider" id="s4">
+    <section class="slide slide-divider slide-dark" id="s4">
       <svg class="ekg" viewBox="0 0 600 60" preserveAspectRatio="none" aria-hidden="true"><path d="M0 30 H180 L200 30 210 10 225 50 240 30 H600" fill="none" stroke="currentColor" stroke-width="2"/></svg>
       <div class="content">
         <p class="kicker anim">Part one</p>
@@ -172,20 +173,23 @@
       </div>
     </section>
 
-    <!-- 7 · EVERYONE ELSE -->
-    <section class="slide" id="s7">
-      <div class="content">
-        <p class="kicker anim">If you're neither — or not sure yet</p>
-        <h2 class="anim">Research is a critical-thinking gym</h2>
-        <div class="cols anim">
-          <div class="card"><h3>Read hard things</h3><p>Dense papers stop being scary. That skill transfers to law, business, engineering — everything.</p></div>
-          <div class="card"><h3>Ask real questions</h3><p>You learn to turn "that's interesting" into a testable, answerable question.</p></div>
-          <div class="card"><h3>Sit with ambiguity</h3><p>Most experiments fail or half-work. You get comfortable not knowing — and finding out.</p></div>
-          <div class="card"><h3>Defend your reasoning</h3><p>Lab meetings teach you to make a claim, back it with evidence, and take criticism without flinching.</p></div>
+    <!-- 7 · EVERYONE ELSE (pinned brain showcase) -->
+    <section class="slide pin-section" id="s7">
+      <div class="pin-sticky">
+        <span class="pin-ghost" aria-hidden="true">THINK</span>
+        <div class="pin-head">
+          <p class="kicker anim">If you're neither — or not sure yet</p>
+          <h2 class="anim">Research is a<br />critical-thinking gym</h2>
         </div>
-      </div>
-      <div class="notes">
-        <strong>~1.5 min.</strong> This is the slide for the undecided kids — don't skip it. "Even if you never set foot in a lab again, one year of research rewires how you think."
+        <div class="pin-features">
+          <div class="pin-feature"><h3>Read hard things</h3><p>Dense papers stop being scary. That skill transfers to law, business, engineering — everything.</p></div>
+          <div class="pin-feature"><h3>Ask real questions</h3><p>You learn to turn "that's interesting" into a testable, answerable question.</p></div>
+          <div class="pin-feature"><h3>Sit with ambiguity</h3><p>Most experiments fail or half-work. You get comfortable not knowing — and finding out.</p></div>
+          <div class="pin-feature"><h3>Defend your reasoning</h3><p>Lab meetings teach you to make a claim, back it with evidence, and take criticism without flinching.</p></div>
+        </div>
+        <div class="notes">
+          <strong>~1.5 min.</strong> The brain rebuilds itself as you scroll here — scrub slowly, one feature at a time. This is the slide for the undecided kids: "Even if you never set foot in a lab again, one year of research rewires how you think."
+        </div>
       </div>
     </section>
 
@@ -220,7 +224,7 @@
     </section>
 
     <!-- 9 · DIVIDER: NETWORKING -->
-    <section class="slide slide-divider" id="s9">
+    <section class="slide slide-divider slide-dark" id="s9">
       <svg class="ekg" viewBox="0 0 600 60" preserveAspectRatio="none" aria-hidden="true"><path d="M0 30 H180 L200 30 210 10 225 50 240 30 H600" fill="none" stroke="currentColor" stroke-width="2"/></svg>
       <div class="content">
         <p class="kicker anim">Part two</p>
@@ -233,7 +237,7 @@
     </section>
 
     <!-- 10 · NETWORKING ≠ SCHMOOZING -->
-    <section class="slide" id="s10">
+    <section class="slide slide-dark" id="s10">
       <div class="content">
         <p class="kicker anim">Redefined</p>
         <h2 class="anim">Networking &ne; schmoozing</h2>
@@ -250,7 +254,7 @@
     </section>
 
     <!-- 11 · COLD EMAIL MINDSET -->
-    <section class="slide slide-mindset" id="s11">
+    <section class="slide slide-dark slide-mindset" id="s11">
       <div class="content">
         <p class="kicker anim">The mindset</p>
         <h2 class="anim">You can do anything you want to do</h2>
@@ -278,7 +282,7 @@
     </section>
 
     <!-- 12 · ANATOMY OF A COLD EMAIL -->
-    <section class="slide" id="s12">
+    <section class="slide slide-dark" id="s12">
       <div class="content wide">
         <p class="kicker anim">The craft</p>
         <h2 class="anim">Anatomy of a cold email</h2>
@@ -312,7 +316,7 @@
     </section>
 
     <!-- 13 · DO / DON'T -->
-    <section class="slide" id="s13">
+    <section class="slide slide-dark" id="s13">
       <div class="content">
         <p class="kicker anim">Ground rules</p>
         <h2 class="anim">Do / Don't</h2>
@@ -399,7 +403,7 @@
     </section>
 
     <!-- 16 · CLOSE -->
-    <section class="slide slide-title slide-close" id="s16">
+    <section class="slide slide-title slide-close slide-dark" id="s16">
       <div class="content">
         <p class="kicker anim">One last thing</p>
         <h2 class="anim">Send it.</h2>

@@ -32,7 +32,10 @@
     dots.forEach((d, j) => d.classList.toggle("active", j === i));
     counterCurrent.textContent = i + 1;
     advanceBtn.classList.toggle("hidden", i === slides.length - 1);
-    document.body.classList.toggle("on-dark", slides[i].classList.contains("slide-divider"));
+    const dark = slides[i].classList.contains("slide-dark");
+    document.body.classList.toggle("on-dark", dark);
+    document.body.classList.toggle("theater", dark); // scroll-linked light→obsidian bleed
+    document.body.classList.toggle("pin-active", slides[i].classList.contains("pin-section"));
   }
 
   /* ---- Entrance animations ---- */
@@ -42,27 +45,46 @@
   );
   slides.forEach((s) => observer.observe(s));
 
-  /* ---- Horizontal section scroller ---- */
+  /* ---- Tall scrub sections (horizontal timeline + pinned brain) ---- */
   const hs = document.querySelector(".hscroll");
   const hsTrack = hs && hs.querySelector(".hs-track");
   const hsViewport = hs && hs.querySelector(".hs-viewport");
   const hsFill = hs && hs.querySelector(".hs-progress-fill");
-  const hsCards = hs ? hs.querySelectorAll(".hs-card").length : 0;
-  const hsIndex = hs ? slides.indexOf(hs) : -1;
+  const hsCardEls = hs ? Array.from(hs.querySelectorAll(".hs-card")) : [];
+  const pin = document.querySelector(".pin-section");
+  const pinFeatures = pin ? Array.from(pin.querySelectorAll(".pin-feature")) : [];
 
-  function hsScrollable() {
-    return hs.offsetHeight - window.innerHeight;
+  function sectionProgress(el) {
+    const scrollable = el.offsetHeight - window.innerHeight;
+    if (scrollable <= 0) return 1;
+    return Math.max(0, Math.min(1, (window.scrollY - el.offsetTop) / scrollable));
+  }
+
+  // steps the arrow keys take through a tall section
+  function tallSteps(el) {
+    if (el === hs) return hsCardEls.length - 1;
+    if (el === pin) return pinFeatures.length;
+    return 0;
   }
 
   function updateHscroll() {
     if (!hs) return;
-    const scrollable = hsScrollable();
-    if (scrollable <= 0) return;
-    const pos = window.scrollY - hs.offsetTop;
-    const prog = Math.max(0, Math.min(1, pos / scrollable));
+    const prog = sectionProgress(hs);
     const span = hsTrack.scrollWidth - hsViewport.clientWidth;
     hsTrack.style.transform = `translate3d(${(-prog * Math.max(0, span)).toFixed(1)}px, 0, 0)`;
-    hsFill.style.width = `${(prog * 100).toFixed(2)}%`;
+    hsFill.style.transform = `scaleX(${prog.toFixed(4)})`;
+    // low-opacity focus: only the card nearest center is fully lit
+    const active = Math.round(prog * (hsCardEls.length - 1));
+    hsCardEls.forEach((c, i) => c.classList.toggle("hs-active", i === active));
+  }
+
+  function updatePin() {
+    if (!pin) return;
+    const prog = sectionProgress(pin);
+    window.__pinProgress = document.body.classList.contains("pin-active") ? prog : null;
+    // reading-spotlight: illuminate the feature the viewer is scrolled to
+    const active = Math.min(pinFeatures.length - 1, Math.floor(prog * pinFeatures.length));
+    pinFeatures.forEach((f, i) => f.classList.toggle("active", i === active));
   }
 
   /* ---- Scroll tracking: active slide + top progress bar ---- */
@@ -76,7 +98,7 @@
       const overall = doc.scrollHeight > window.innerHeight
         ? window.scrollY / (doc.scrollHeight - window.innerHeight)
         : 1;
-      barFill.style.width = `${(overall * 100).toFixed(2)}%`;
+      barFill.style.transform = `scaleX(${overall.toFixed(4)})`;
 
       const cy = window.innerHeight / 2;
       for (let i = 0; i < slides.length; i++) {
@@ -87,6 +109,7 @@
         }
       }
       updateHscroll();
+      updatePin();
     });
   }
   window.addEventListener("scroll", onScroll, { passive: true });
@@ -98,13 +121,19 @@
     window.scrollTo({ top, behavior: reducedMotion ? "auto" : "smooth" });
   }
 
+  function tallOf(i) {
+    const el = slides[i];
+    return el && tallSteps(el) > 0 ? el : null;
+  }
+
   function next() {
-    if (current === hsIndex) {
-      const scrollable = hsScrollable();
-      const pos = window.scrollY - hs.offsetTop;
+    const tall = tallOf(current);
+    if (tall) {
+      const scrollable = tall.offsetHeight - window.innerHeight;
+      const pos = window.scrollY - tall.offsetTop;
       if (pos < scrollable - 4) {
-        const step = scrollable / (hsCards - 1);
-        smoothScrollTo(hs.offsetTop + Math.min(pos + step, scrollable));
+        const step = scrollable / tallSteps(tall);
+        smoothScrollTo(tall.offsetTop + Math.min(pos + step, scrollable));
         return;
       }
     }
@@ -112,17 +141,19 @@
   }
 
   function prev() {
-    if (current === hsIndex) {
-      const pos = window.scrollY - hs.offsetTop;
+    const tall = tallOf(current);
+    if (tall) {
+      const pos = window.scrollY - tall.offsetTop;
       if (pos > 4) {
-        const step = hsScrollable() / (hsCards - 1);
-        smoothScrollTo(hs.offsetTop + Math.max(pos - step, 0));
+        const step = (tall.offsetHeight - window.innerHeight) / tallSteps(tall);
+        smoothScrollTo(tall.offsetTop + Math.max(pos - step, 0));
         return;
       }
     }
-    if (current - 1 === hsIndex) {
-      // entering the timeline from below: land on its last card
-      smoothScrollTo(hs.offsetTop + hsScrollable());
+    const above = tallOf(current - 1);
+    if (above) {
+      // entering a scrub section from below: land on its final beat
+      smoothScrollTo(above.offsetTop + above.offsetHeight - window.innerHeight);
       return;
     }
     goTo(current - 1);
@@ -179,10 +210,13 @@
     document.addEventListener("mouseover", (e) => {
       ring.classList.toggle("cursor-grow", !!e.target.closest("button, a, kbd"));
     });
+    let ringScale = 1;
     (function follow() {
       rx += (mx - rx) * 0.16;
       ry += (my - ry) * 0.16;
-      ring.style.transform = `translate(${rx.toFixed(1)}px, ${ry.toFixed(1)}px)`;
+      // grow via transform: scale() only — never width/height
+      ringScale += ((ring.classList.contains("cursor-grow") ? 1.55 : 1) - ringScale) * 0.2;
+      ring.style.transform = `translate(${rx.toFixed(1)}px, ${ry.toFixed(1)}px) scale(${ringScale.toFixed(3)})`;
       requestAnimationFrame(follow);
     })();
   } else {
