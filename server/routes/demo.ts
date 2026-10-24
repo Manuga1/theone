@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { graph } from '../db/graph';
 import { DEMO_NOW, DEMO_TODAY } from '@shared/clock';
-import type { DemoState, Health } from '@shared/api-types';
+import type { DemoResetInput, DemoResetResult, DemoState, Health } from '@shared/api-types';
+import { resetDemo } from '../seed/reset';
 
 export const demoRouter = Router();
 
@@ -35,4 +36,12 @@ demoRouter.get('/demo/state', (req, res) => {
     participantPseudonym: detailed?.pseudonym ?? null,
   };
   res.json(body);
+});
+
+/** Wipe + reseed in-process (the UI's "Reset demo" button). Body: { scale?, schemaOnly? }. */
+demoRouter.post('/demo/reset', (req, res, next) => {
+  try {
+    const body: DemoResetResult = resetDemo((req.body ?? {}) as DemoResetInput);
+    res.json(body);
+  } catch (e) { next(e); }
 });

@@ -72,9 +72,13 @@ export class Db {
     if (this.path === ':memory:') return;
     this.raw.exec('PRAGMA journal_mode = OFF');
     this.raw.exec('PRAGMA synchronous = OFF');
+    this.raw.exec('PRAGMA cache_size = -262144'); // 256 MiB page cache while bulk loading (index maintenance stays in memory)
+    this.raw.exec('PRAGMA locking_mode = EXCLUSIVE');
   }
   endBulk(): void {
     if (this.path === ':memory:') return;
+    this.raw.exec('PRAGMA locking_mode = NORMAL');
+    this.raw.exec('PRAGMA cache_size = -16384');
     this.raw.exec('PRAGMA journal_mode = WAL');
     this.raw.exec('PRAGMA synchronous = NORMAL');
   }

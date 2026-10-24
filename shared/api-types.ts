@@ -25,6 +25,18 @@ export type TreeNode = {
   inRing: boolean;
   inList: boolean;
   children: TreeNode[];
+  // --- additive (backend core): collection defaults so the buyer UI can build campaign variables from the tree ---
+  /** explicit weight within the parent (children sum to 1) */
+  weight?: number;
+  /** default participant compensation (net cents) for collecting this leaf */
+  compCents?: number;
+  /** default device / test cost (cents) per collection */
+  deviceCostCents?: number;
+  /** the platform has a collection protocol for this leaf */
+  enrichable?: boolean;
+  /** span required for "verified" */
+  minSpanDays?: number;
+  collectionMethod?: string | null;
 };
 
 export type ActivityItem = {
@@ -60,6 +72,8 @@ export type ParticipantHome = {
   opportunities: { count: number; maxCents: number };
   ring: RingNode[];
   whatChanged: ActivityItem[];
+  /** additive: true when no detailed participant exists (schema-only database) */
+  empty?: boolean;
 };
 
 export type ParticipantSignature = {
@@ -279,6 +293,12 @@ export type CohortPreview = {
 };
 
 export type SavedCohort = { id: number; name: string; criteria: CohortCriteria; createdAt: string; orgId: number };
+/** additive: GET /buyer/cohorts/:id returns the saved cohort together with its (cached) preview */
+export type SavedCohortDetail = SavedCohort & { preview: CohortPreview };
+/** additive: GET /buyer/cohorts returns this */
+export type SavedCohortList = { cohorts: SavedCohort[] };
+/** additive: POST /buyer/cohorts body */
+export type CohortCreate = { name: string; criteria: CohortCriteria };
 
 export type CostLine = { key: 'participant_comp' | 'devices_testing' | 'data_preparation' | 'platform_recruitment'; label: string; cents: number };
 export type Estimate = {
@@ -417,3 +437,33 @@ export type DemoState = {
 export type Health = { ok: boolean; ready: boolean; seeded: boolean };
 export type Ok = { ok: true; writeVersion: number };
 export type ApiError = { error: string; code?: string };
+
+// ---------- additive (backend loop): list wrappers and mutation results ----------
+/** GET /buyer/studies */
+export type StudyList = { studies: StudySummary[] };
+/** GET /buyer/campaigns */
+export type CampaignList = { campaigns: Campaign[] };
+/** GET /buyer/datasets */
+export type DatasetList = { datasets: DatasetSummary[] };
+/** POST /buyer/studies/:id/advance body */
+export type AdvanceRequest = { days: number };
+/** POST /buyer/studies/:id/advance result: how many opportunities changed state during the simulated days */
+export type AdvanceResult = Ok & { days: number; totalDays: number; transitions: Record<string, number>; completions: number; counters: StudyCounters; datasetId: number | null; datasetVersion: number | null };
+/** POST /buyer/studies/:id/recontact result */
+export type RecontactResult = Ok & { replaced: number; offered: number; poolExhausted: boolean; counters: StudyCounters };
+/** POST /buyer/studies/:id/variables result */
+export type VariableRequestResult = Ok & { campaign: Campaign; conceptSlug: string; isNewConcept: boolean; offered: number; watchersNotified: number };
+/** POST /buyer/datasets/:id/refresh result */
+export type DatasetRefreshResult = Ok & { datasetId: number; version: number; memberCount: number; dropped: number; added: number };
+/** POST /buyer/datasets/:id/export-request body + result */
+export type ExportRequestInput = { variables?: string[] };
+export type ExportRequestResult = Ok & { id: number; status: string; variables: string[] };
+/** POST /participant/opportunities/:id/accept result */
+export type AcceptResult = Ok & { enrollmentId: number; licenseId: number; licenseNumber: string; contributionIds: number[] };
+/** POST /participant/contributions/:id/simulate result */
+export type SimulateResult = Ok & { contributionId: number; status: 'verified'; observationCount: number; artifactCount: number; paidCents: number; opportunityStatus: OpportunityStatus; opportunityComplete: boolean };
+/** DELETE /participant/categories/:domain result */
+export type CategoryDeleteResult = Ok & { domain: string; observationsDeleted: number; excluded: boolean };
+/** POST /demo/reset body + result */
+export type DemoResetInput = { scale?: number; schemaOnly?: boolean };
+export type DemoResetResult = Ok & { seeded: boolean; participants: number; ms: number };

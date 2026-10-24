@@ -35,7 +35,7 @@ export function emitChanged(): void {
 }
 
 export class ApiRequestError extends Error {
-  constructor(public status: number, message: string, public code?: string) {
+  constructor(public status: number, message: string, public code?: string, public url?: string) {
     super(message);
   }
 }
@@ -50,13 +50,15 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
   const data = text ? (JSON.parse(text) as unknown) : null;
   if (!res.ok) {
     const e = (data ?? {}) as ApiError;
-    throw new ApiRequestError(res.status, e.error ?? res.statusText, e.code);
+    throw new ApiRequestError(res.status, e.error ?? res.statusText, e.code, url);
   }
   return data as T;
 }
 
 export const api = {
   get: <T>(url: string) => request<T>('GET', url),
+  /** POST that only reads (preview / estimate): no `changed` broadcast, so live previews never trigger page-wide refetches. */
+  query: <T>(url: string, body?: unknown) => request<T>('POST', url, body ?? {}),
   post: async <T>(url: string, body?: unknown) => {
     const r = await request<T>('POST', url, body ?? {});
     emitChanged();
