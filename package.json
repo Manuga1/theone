@@ -1,0 +1,48 @@
+{
+  "name": "health-data-asset-model",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local working model of a participant-owned health data asset platform: personal health graph, cohort engine, collection-campaign loop, controlled buyer view.",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c blue,green \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "node scripts/ensure-seed.mjs && tsx watch --clear-screen=false server/index.ts",
+    "dev:web": "vite",
+    "seed": "tsx server/seed/index.ts --force",
+    "seed:small": "tsx server/seed/index.ts --force --scale 0.05",
+    "data:wipe": "node scripts/data-wipe.mjs",
+    "test": "vitest run",
+    "test:full": "FULL=1 vitest run tests/funnel-full.test.ts",
+    "test:e2e": "playwright test",
+    "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.client.json --noEmit",
+    "build": "vite build",
+    "start": "node scripts/ensure-seed.mjs && NODE_ENV=production tsx server/index.ts"
+  },
+  "dependencies": {
+    "express": "5.3.0",
+    "lucide-react": "1.61.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "react-router-dom": "7.18.4",
+    "recharts": "3.10.1",
+    "tsx": "4.23.15",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/express": "5.0.6",
+    "@types/node": "22.20.5",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@types/supertest": "7.2.1",
+    "@vitejs/plugin-react": "6.1.2",
+    "concurrently": "10.0.6",
+    "supertest": "7.3.1",
+    "typescript": "5.9.3",
+    "vite": "8.3.5",
+    "vitest": "5.0.5"
+  }
+}

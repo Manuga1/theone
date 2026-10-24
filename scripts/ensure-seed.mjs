@@ -1,0 +1,20 @@
+// Seeds the local databases if they do not exist yet. Runs before the dev server.
+// Synthetic data is written only to ./data (gitignored). `npm run data:wipe` removes it.
+// Set SEED_DISABLED=1 (or pass --no-seed) to create the schema only and run with an empty database.
+import { existsSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const graph = path.join(root, 'data', 'graph.sqlite');
+const noSeed = process.env.SEED_DISABLED === '1' || process.argv.includes('--no-seed');
+
+if (existsSync(graph)) {
+  console.log('[ensure-seed] data/graph.sqlite present, skipping seed');
+  process.exit(0);
+}
+const args = ['server/seed/index.ts', ...(noSeed ? ['--schema-only'] : [])];
+console.log(`[ensure-seed] ${noSeed ? 'creating empty schema' : 'seeding synthetic data'} ...`);
+const r = spawnSync('npx', ['tsx', ...args], { cwd: root, stdio: 'inherit', env: { ...process.env, NODE_OPTIONS: '--disable-warning=ExperimentalWarning' } });
+process.exit(r.status ?? 1);

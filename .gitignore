@@ -1,0 +1,9 @@
+node_modules/
+dist/
+data/
+!data/.gitkeep
+e2e/screenshots/
+test-results/
+playwright-report/
+*.log
+.DS_Store
