@@ -156,16 +156,26 @@ function series(participantId: number, c: ConceptRow, db: Db): NodeDetail['serie
   return { keys: [{ key, label: c.name, color: '#1d6ef5' }], points, window: windowed ? { from, to } : { from: rows[0].d, to: rows[rows.length - 1].d } };
 }
 
+/** Research use of one node: licenses whose lines cover it (reuse fees) plus verified protocol contributions paid for it. */
 function research(participantId: number, c: ConceptRow, db: Db): NodeDetail['research'] {
   const lines = db.all<{ number: number; study: string; org: string; cents: number; date: string }>(
     `SELECT l.number, s.name AS study, o.name AS org, ll.cents, l.term_start AS date FROM license_line ll JOIN license l ON l.id = ll.license_id
        JOIN study s ON s.id = l.study_id JOIN buyer_org o ON o.id = l.buyer_org_id WHERE l.participant_id = ? AND ll.concept_id = ? AND l.revoked_at IS NULL ORDER BY l.term_start`, participantId, c.id);
+  // contribution payments for this concept (the license of the same enrollment, when there is one, names the row)
+  const payments = db.all<{ number: number | null; study: string; org: string; cents: number; date: string }>(
+    `SELECT (SELECT l.number FROM license l JOIN enrollment e ON e.id = l.enrollment_id WHERE e.opportunity_id = ct.opportunity_id ORDER BY l.id DESC LIMIT 1) AS number,
+            s.name AS study, o.name AS org, le.participant_cents AS cents, substr(le.occurred_at, 1, 10) AS date
+       FROM ledger_entry le JOIN contribution ct ON ct.id = le.contribution_id JOIN study s ON s.id = le.study_id JOIN buyer_org o ON o.id = s.buyer_org_id
+      WHERE le.participant_id = ? AND le.kind = 'contribution_payment' AND ct.concept_id = ? ORDER BY le.occurred_at`, participantId, c.id);
   const collecting = db.all<{ vars: string }>("SELECT variables_json AS vars FROM campaign WHERE status = 'active'")
     .filter((r) => (JSON.parse(r.vars) as { conceptSlug: string; mode: string }[]).some((v) => v.conceptSlug === c.slug && v.mode !== 'reuse')).length;
   return {
     licenses: new Set(lines.map((l) => l.number)).size,
-    earningsCents: lines.reduce((a, l) => a + l.cents, 0),
+    earningsCents: lines.reduce((a, l) => a + l.cents, 0) + payments.reduce((a, l) => a + l.cents, 0),
     requestedBy: collecting,
-    lines: lines.map((l) => ({ licenseNumber: licenseNumber(l.number), studyName: l.study, orgName: l.org, cents: l.cents, date: l.date })),
+    lines: [
+      ...lines.map((l) => ({ licenseNumber: licenseNumber(l.number), studyName: l.study, orgName: l.org, cents: l.cents, date: l.date })),
+      ...payments.map((l) => ({ licenseNumber: l.number ? licenseNumber(l.number) : 'Protocol payment', studyName: l.study, orgName: l.org, cents: l.cents, date: l.date })),
+    ].sort((a, b) => a.date.localeCompare(b.date)),
   };
 }

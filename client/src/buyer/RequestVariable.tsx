@@ -42,10 +42,22 @@ export default function RequestVariablePage() {
     return out.map((g) => ({ ...g, name: g.name.replace(/^ › /, '') }));
   }, [ont.data, ont.leaves]);
 
-  // First enrichable concept becomes the default once the ontology arrives; defaults are its collection protocol.
+  // Variables the study already collects or reuses (coverage rows + root/child campaign variables when served).
+  const collected = useMemo(() => {
+    const set = new Set<string>();
+    type Loose = Omit<StudyDetail, 'campaigns'> & { campaigns?: { variables?: { conceptSlug: string }[] }[] };
+    const d = study.data as Loose | null;
+    d?.coverage.forEach((c) => set.add(c.slug));
+    d?.campaigns?.forEach((cp) => cp.variables?.forEach((v) => set.add(v.conceptSlug)));
+    return set;
+  }, [study.data]);
+  // Default = first enrichable concept the study does not already hold (e.g. Gut microbiome); never one it collects.
+  // Waits for the study (or its error) so the default is not chosen before coverage is known.
   useEffect(() => {
-    if (!concept && enrichable.length) setConcept(enrichable[0].slug);
-  }, [enrichable, concept]);
+    if (concept || !enrichable.length || (study.loading && !study.data && !study.error)) return;
+    const pick = enrichable.find((l) => !collected.has(l.slug)) ?? enrichable[0];
+    setConcept(pick.slug);
+  }, [enrichable, concept, collected, study.loading, study.data, study.error]);
   useEffect(() => {
     const leaf = ont.bySlug.get(concept);
     if (!leaf || mode !== 'existing') return;
@@ -106,7 +118,7 @@ export default function RequestVariablePage() {
             <div className="form-grid">
               <span className="l">Concept</span>
               <select className="select" value={concept} onChange={(e) => setConcept(e.target.value)}>
-                {enrichable.map((l) => <option key={l.slug} value={l.slug}>{l.name} — {l.slug.split('.').slice(0, 2).join(' › ')}</option>)}
+                {enrichable.map((l) => <option key={l.slug} value={l.slug}>{l.name} — {l.slug.split('.').slice(0, 2).join(' › ')}{collected.has(l.slug) ? ' (already in study)' : ''}</option>)}
                 {ont.leaves.filter((l) => !l.enrichable).map((l) => <option key={l.slug} value={l.slug}>{l.name} (no standard protocol)</option>)}
               </select>
               {leaf && <><span className="l">Default</span><span className="small muted">{leaf.collectionMethod ?? '—'} · comp {money(leaf.compCents ?? 0)} · device {money(leaf.deviceCostCents ?? 0)}{leaf.unit ? ` · ${leaf.unit}` : ''}</span></>}

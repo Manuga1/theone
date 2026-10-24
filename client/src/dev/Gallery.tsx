@@ -5,7 +5,7 @@ import { useParams } from 'react-router-dom';
 import { Activity, FlaskConical, Moon, Wallet, HeartPulse, Database, ShieldCheck, Sparkles, Check, Link as LinkIcon } from 'lucide-react';
 import {
   Card, StatTile, Pill, StatePill, Tabs, StatusDot, StateGlyph, ProgressBar, BarRow, EmptyState, Splash, SearchBar, ProvenanceSelect,
-  RevokeDialog, StepBar, RadialSignature, ConceptTree, BPChart, TimelineRail, SwimlaneStrip, LineageChain, Funnel, MissingMatrix, Heatmap,
+  RevokeDialog, StepBar, RadialSignature, ConceptTree, LazyBPChart, TimelineRail, SwimlaneStrip, LineageChain, Funnel, MissingMatrix, Heatmap,
   CoverageBars, ConsentPanel, LedgerTable, Shell, Money, Num, KNum, Pct, signed,
 } from '../components';
 import * as fx from './fixtures';
@@ -127,7 +127,7 @@ function Participant() {
       </Item>
       <Item title="BPChart" width={620}>
         <Card title="Blood Pressure" sub="14 months continuous data · 1,482 measurements" right={<StatePill state="verified" />}>
-          <BPChart series={fx.bpSeries} title="Blood Pressure" unit="mmHg" yDomain={[60, 180]} />
+          <LazyBPChart series={fx.bpSeries} title="Blood Pressure" unit="mmHg" yDomain={[60, 180]} />
           <div className="grid grid--2 mt-12">
             <Card soft tight title="Source"><div className="strong">Omron BP7450</div><div className="small muted">Device connected directly</div></Card>
             <Card soft tight title="Verification"><div className="strong">Device verified</div><div className="small muted">Last synced: 1 day ago</div></Card>

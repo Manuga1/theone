@@ -96,8 +96,8 @@ participantRouter.get('/sources', wrap((_req, res) => {
 participantRouter.post('/sources/:id/connect', wrap((req, res) => {
   const p = detailed();
   if (!p) throw notFound('participant');
-  connectSource(p.id, Number(req.params.id));
-  res.json(ok());
+  const r = connectSource(p.id, Number(req.params.id));
+  res.json({ ...ok(), ...r });
 }));
 participantRouter.post('/sources/:id/disconnect', wrap((req, res) => {
   const p = detailed();

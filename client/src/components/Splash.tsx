@@ -1,4 +1,4 @@
-export function Splash({ title = 'Preparing demo data…', sub = 'Generating the synthetic health graph. This takes a few seconds.' }: { title?: string; sub?: string }) {
+export function Splash({ title = 'Preparing demo data…', sub = 'Generating the synthetic health graph. This takes about 15 seconds.' }: { title?: string; sub?: string }) {
   return (
     <div className="splash">
       <div className="splash__box">

@@ -6,7 +6,7 @@ import { ShieldAlert } from 'lucide-react';
 import type { CohortPreview, DemoState, OntologyResponse, SavedCohortDetail, TreeNode } from '@shared/api-types';
 import type { CohortCriteria } from '@shared/criteria';
 import { DEFAULT_CRITERIA } from '@shared/criteria';
-import type { CampaignVariable, ProtocolRequirement } from '@shared/requirement';
+import type { CampaignVariable, ProtocolRequirement, VariableMode } from '@shared/requirement';
 import { api } from '../api';
 import { useApi, usePersona } from '../hooks';
 import { StepBar, type Step } from '../components/StepBar';
@@ -121,23 +121,69 @@ export function defaultProtocol(leaf: TreeNode | undefined, minProvRank: number)
   return { method, durationDays: DURATION_BY_METHOD[method], minProvRank: Math.min(minProvRank, 3) };
 }
 
+/** Reuse (license) fee for a leaf: `TreeNode.reuseCompCents` when the ontology serves it, else none. */
+export function reuseFeeCents(leaf: TreeNode | undefined): number | null {
+  const v = leaf?.reuseCompCents;
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+/** Can this leaf be collected at all? Only leaves with a platform collection protocol can be put in a collect mode. */
+export function canCollect(leaf: TreeNode | undefined): boolean {
+  return !!leaf?.enrichable;
+}
+
+/**
+ * Default mode for a modality the cohort already requires: 'reuse' for anything without a collection protocol
+ * (EHR history, imaging and other file-type records that cannot be collected quickly), 'collect_if_missing' for
+ * enrichable leaves (device, kit, photo, survey protocols).
+ */
+export function defaultMode(leaf: TreeNode | undefined): VariableMode {
+  return canCollect(leaf) ? 'collect_if_missing' : 'reuse';
+}
+
+/** Rebuild a campaign variable for a mode: reuse keeps the historical requirement and pays the license fee; collect modes add the protocol and collection comp. */
+export function withMode(v: CampaignVariable, mode: VariableMode, leaf: TreeNode | undefined): CampaignVariable {
+  const m = canCollect(leaf) ? mode : 'reuse';
+  const historical = v.requirement.historical;
+  if (m === 'reuse') {
+    return { ...v, mode: m, requirement: { ...(historical ? { historical } : {}) }, compCents: reuseFeeCents(leaf) ?? 0, deviceCostCents: 0 };
+  }
+  const minProvRank = historical?.minProvRank ?? v.requirement.protocol?.minProvRank ?? 3;
+  return {
+    ...v,
+    mode: m,
+    requirement: { ...(historical ? { historical } : {}), protocol: v.requirement.protocol ?? defaultProtocol(leaf, minProvRank) },
+    compCents: leaf?.compCents ?? 0,
+    deviceCostCents: leaf?.deviceCostCents ?? 0,
+  };
+}
+
 /** Campaign variables for "expand this cohort": collect each required modality where missing, reuse the rest. */
-export function variablesFromCriteria(criteria: CohortCriteria, bySlug: Map<string, TreeNode>): CampaignVariable[] {
+export function variablesFromCriteria(criteria: CohortCriteria, bySlug: Map<string, TreeNode>, modes: Partial<Record<string, VariableMode>> = {}): CampaignVariable[] {
   return criteria.modalities.map((m) => {
     const leaf = bySlug.get(m.slug);
-    const enrichable = !!leaf?.enrichable;
-    return {
+    const base: CampaignVariable = {
       conceptSlug: m.slug,
-      mode: enrichable ? 'collect_if_missing' : 'reuse',
-      requirement: {
-        historical: { minSpanDays: m.minSpanDays, minProvRank: m.minProvRank },
-        ...(enrichable ? { protocol: defaultProtocol(leaf, m.minProvRank) } : {}),
-      },
-      compCents: enrichable ? leaf?.compCents ?? 0 : 0,
-      deviceCostCents: enrichable ? leaf?.deviceCostCents ?? 0 : 0,
+      mode: 'reuse',
+      requirement: { historical: { minSpanDays: m.minSpanDays, minProvRank: m.minProvRank } },
+      compCents: 0,
+      deviceCostCents: 0,
     };
+    return withMode(base, modes[m.slug] ?? defaultMode(leaf), leaf);
   });
 }
+
+/** Fee shown per variable row: the reuse (license) fee for reuse rows, the collection comp otherwise. */
+export function variableFeeCents(v: CampaignVariable, leaf: TreeNode | undefined): number | null {
+  if (v.mode !== 'reuse') return v.compCents;
+  return v.compCents > 0 ? v.compCents : reuseFeeCents(leaf);
+}
+
+export const MODE_OPTIONS: { key: VariableMode; label: string; hint: string }[] = [
+  { key: 'reuse', label: 'Reuse', hint: 'License the data the participant already holds; pays a reuse fee, no new collection.' },
+  { key: 'collect_if_missing', label: 'Collect if missing', hint: 'Collect only from participants who lack it; reuse (and pay the fee) for the rest.' },
+  { key: 'collect_all', label: 'Collect for all', hint: 'Re-measure every member under the protocol, including ready-now participants.' },
+];
 
 export const MODE_LABEL: Record<CampaignVariable['mode'], string> = { reuse: 'Reuse existing', collect_if_missing: 'Collect if missing', collect_all: 'Collect for all' };
 
@@ -147,6 +193,6 @@ export function requirementLabel(v: CampaignVariable): string {
     const d = v.requirement.historical.minSpanDays;
     parts.push(d >= 365 ? `≥ ${Math.round(d / 365)} y history` : d >= 30 ? `≥ ${Math.round(d / 30)} mo history` : d > 0 ? `≥ ${d} d history` : 'any history');
   }
-  if (v.requirement.protocol) parts.push(`${v.requirement.protocol.durationDays} d ${v.requirement.protocol.method} protocol`);
+  if (v.requirement.protocol) parts.push(`${v.requirement.protocol.durationDays} d ${v.requirement.protocol.method}`);
   return parts.join(' or ') || '—';
 }

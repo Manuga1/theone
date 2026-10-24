@@ -13,7 +13,13 @@ import { buildTree, conceptBySlug, type ConceptRow } from './ontology';
 import { makeSalt, scopedPseudonym } from './pseudonym';
 import { STARTED_STATUSES, sqlList } from './state';
 
-export type DatasetVar = { slug: string; source: 'protocol' | 'reuse' };
+/**
+ * How a dataset variable is present for a member: 'protocol' = a verified protocol contribution in this study
+ * (collect_all); 'reuse' = any existing coverage (reuse); 'either' = a verified contribution OR existing coverage
+ * (collect_if_missing: collected from members who lacked it, licensed from the rest).
+ */
+export type DatasetVar = { slug: string; source: 'protocol' | 'reuse' | 'either' };
+const SOURCE_RANK: Record<DatasetVar['source'], number> = { reuse: 0, either: 1, protocol: 2 };
 type DatasetRow = { id: number; study_id: number; version: number; status: 'current' | 'superseded'; description: string | null; salt: string; variables_json: string; built_at: string; member_count: number; study_name: string; buyer_org_id: number; purpose: string; license_term_months: number };
 
 const DATASET_LABELS: Record<string, string> = {
@@ -47,15 +53,15 @@ export function parseDatasetVars(json: string): DatasetVar[] {
   return JSON.parse(json) as DatasetVar[];
 }
 
-/** Variables for a study's dataset: demographics first, then every campaign variable (collected ones are 'protocol'). */
+/** Variables for a study's dataset: demographics first, then every campaign variable (collect_all → 'protocol', collect_if_missing → 'either', reuse → 'reuse'). */
 export function defaultVariables(studyId: number, db: Db = graph()): DatasetVar[] {
   const out = new Map<string, DatasetVar>();
   out.set('demographics.basics.age', { slug: 'demographics.basics.age', source: 'reuse' });
   for (const c of db.all<{ variables_json: string }>('SELECT variables_json FROM campaign WHERE study_id = ? ORDER BY (parent_campaign_id IS NULL) DESC, id', studyId)) {
     for (const v of JSON.parse(c.variables_json) as { conceptSlug: string; mode: string }[]) {
+      const source: DatasetVar['source'] = v.mode === 'collect_all' ? 'protocol' : v.mode === 'collect_if_missing' ? 'either' : 'reuse';
       const prev = out.get(v.conceptSlug);
-      if (v.mode !== 'reuse') out.set(v.conceptSlug, { slug: v.conceptSlug, source: 'protocol' });
-      else if (!prev) out.set(v.conceptSlug, { slug: v.conceptSlug, source: 'reuse' });
+      if (!prev || SOURCE_RANK[source] > SOURCE_RANK[prev.source]) out.set(v.conceptSlug, { slug: v.conceptSlug, source });
     }
   }
   return Array.from(out.values());
@@ -99,7 +105,7 @@ export function buildDataset(db: Db, studyId: number, opts: { now?: string; vari
 }
 function mergeVars(prev: DatasetVar[], next: DatasetVar[]): DatasetVar[] {
   const out = new Map(prev.map((v) => [v.slug, v]));
-  for (const v of next) { const p = out.get(v.slug); if (!p || (p.source === 'reuse' && v.source === 'protocol')) out.set(v.slug, v); }
+  for (const v of next) { const p = out.get(v.slug); if (!p || SOURCE_RANK[v.source] > SOURCE_RANK[p.source]) out.set(v.slug, v); }
   return Array.from(out.values());
 }
 
@@ -124,15 +130,29 @@ const SPAN_BUCKETS: { label: string; min: number; max: number }[] = [
 const AGE_BANDS = ['< 40', '40–49', '50–59', '60–69', '70+'];
 const BAND_SQL = `CASE WHEN p.birth_year > ? THEN '< 40' WHEN p.birth_year > ? THEN '40–49' WHEN p.birth_year > ? THEN '50–59' WHEN p.birth_year > ? THEN '60–69' ELSE '70+' END`;
 
+/**
+ * The ONE membership predicate per dataset variable, shared by the variables tab (n / missing %), the missingness tab
+ * and the workspace (n and stats): a protocol variable is present for members with a verified contribution for it in
+ * this study; a reuse variable for members with any coverage; an 'either' variable (collect_if_missing) for members
+ * with one or the other. Returns a subquery of participant ids with its parameters.
+ */
+const PROTOCOL_MEMBERS_SQL = `SELECT DISTINCT dm.participant_id FROM dataset_member dm JOIN contribution c ON c.participant_id = dm.participant_id AND c.concept_id = ? AND c.status = 'verified'
+                JOIN opportunity op ON op.id = c.opportunity_id JOIN campaign cp ON cp.id = op.campaign_id WHERE dm.dataset_id = ? AND cp.study_id = ?`;
+const REUSE_MEMBERS_SQL = 'SELECT dm.participant_id FROM dataset_member dm JOIN participant_coverage cv ON cv.participant_id = dm.participant_id AND cv.concept_id = ? AND cv.n_obs > 0 WHERE dm.dataset_id = ?';
+function presentMembersSql(d: Pick<DatasetRow, 'id' | 'study_id'>, v: DatasetVar & { concept: ConceptRow }): { sql: string; params: number[] } {
+  const protocol = { sql: PROTOCOL_MEMBERS_SQL, params: [v.concept.id, d.id, d.study_id] };
+  const reuse = { sql: REUSE_MEMBERS_SQL, params: [v.concept.id, d.id] };
+  if (v.source === 'protocol') return protocol;
+  if (v.source === 'reuse') return reuse;
+  return { sql: `${protocol.sql} UNION ${reuse.sql}`, params: [...protocol.params, ...reuse.params] };
+}
+
 export function datasetDetail(orgId: number, id: number, tab: DatasetTab | undefined, db: Db = graph()): Dataset {
   const d = datasetForOrg(orgId, id, db);
   const vars = parseDatasetVars(d.variables_json).map((v) => ({ ...v, concept: conceptBySlug(v.slug, db) })).filter((v): v is DatasetVar & { concept: ConceptRow } => !!v.concept);
   const total = d.member_count;
   const scalar = (sql: string, ...p: (number | string)[]) => db.get<{ n: number }>(sql, ...p)?.n ?? 0;
-  const presentCount = (v: DatasetVar & { concept: ConceptRow }) => v.source === 'protocol'
-    ? scalar(`SELECT COUNT(DISTINCT dm.participant_id) AS n FROM dataset_member dm JOIN contribution c ON c.participant_id = dm.participant_id AND c.concept_id = ? AND c.status = 'verified'
-                JOIN opportunity op ON op.id = c.opportunity_id JOIN campaign cp ON cp.id = op.campaign_id WHERE dm.dataset_id = ? AND cp.study_id = ?`, v.concept.id, d.id, d.study_id)
-    : scalar('SELECT COUNT(*) AS n FROM dataset_member dm JOIN participant_coverage cv ON cv.participant_id = dm.participant_id AND cv.concept_id = ? AND cv.n_obs > 0 WHERE dm.dataset_id = ?', v.concept.id, d.id);
+  const presentCount = (v: DatasetVar & { concept: ConceptRow }) => { const m = presentMembersSql(d, v); return scalar(`SELECT COUNT(*) AS n FROM (${m.sql})`, ...m.params); };
   const pct = (present: number) => (total ? Math.round(((total - present) / total) * 1000) / 10 : 0);
   const variables: DatasetVariable[] = vars.map((v) => { const n = presentCount(v); return { slug: v.slug, label: datasetLabel(v.concept), type: typeOf(v.concept), missingPct: pct(n), n: kfloorN(n) }; });
   const rowLevel = scalar("SELECT COUNT(*) AS n FROM dataset_member WHERE dataset_id = ? AND status = 'row_level'", d.id);
@@ -147,9 +167,15 @@ export function datasetDetail(orgId: number, id: number, tab: DatasetTab | undef
       const n = presentCount(v);
       for (const cls of PROVENANCE_CLASSES) classes.push({ cls, pct: cls === 'protocol_measurement' && n ? 100 : 0 });
     } else {
-      const rows = db.all<{ r: number; n: number }>('SELECT cv.best_prov_rank AS r, COUNT(*) AS n FROM dataset_member dm JOIN participant_coverage cv ON cv.participant_id = dm.participant_id AND cv.concept_id = ? AND cv.n_obs > 0 WHERE dm.dataset_id = ? GROUP BY r', v.concept.id, d.id);
-      const n = rows.reduce((a, r) => a + r.n, 0);
+      // reuse: by the member's best provenance rank; either: verified contributors count as protocol measurement, the rest by rank
+      const protocolN = v.source === 'either' ? scalar(`SELECT COUNT(*) AS n FROM (${PROTOCOL_MEMBERS_SQL})`, v.concept.id, d.id, d.study_id) : 0;
+      const rows = db.all<{ r: number; n: number }>(
+        `SELECT cv.best_prov_rank AS r, COUNT(*) AS n FROM dataset_member dm JOIN participant_coverage cv ON cv.participant_id = dm.participant_id AND cv.concept_id = ? AND cv.n_obs > 0
+          WHERE dm.dataset_id = ?${v.source === 'either' ? ` AND dm.participant_id NOT IN (${PROTOCOL_MEMBERS_SQL})` : ''} GROUP BY r`,
+        ...(v.source === 'either' ? [v.concept.id, d.id, v.concept.id, d.id, d.study_id] : [v.concept.id, d.id]));
+      const n = rows.reduce((a, r) => a + r.n, 0) + protocolN;
       const byClass = new Map<ProvenanceClass, number>();
+      if (protocolN) byClass.set('protocol_measurement', protocolN);
       for (const r of rows) byClass.set(RANK_CLASS[r.r] ?? 'self_report', (byClass.get(RANK_CLASS[r.r] ?? 'self_report') ?? 0) + r.n);
       for (const cls of PROVENANCE_CLASSES) classes.push({ cls, pct: n ? Math.round(((byClass.get(cls) ?? 0) / n) * 1000) / 10 : 0 });
     }
@@ -157,12 +183,8 @@ export function datasetDetail(orgId: number, id: number, tab: DatasetTab | undef
   }) : [];
 
   const missingness = want('missingness') ? vars.map((v) => {
-    const rows = v.source === 'protocol'
-      ? db.all<{ band: string; n: number }>(`SELECT ${BAND_SQL} AS band, COUNT(DISTINCT dm.participant_id) AS n FROM dataset_member dm JOIN participant p ON p.id = dm.participant_id
-           JOIN contribution c ON c.participant_id = dm.participant_id AND c.concept_id = ? AND c.status = 'verified' JOIN opportunity op ON op.id = c.opportunity_id JOIN campaign cp ON cp.id = op.campaign_id
-          WHERE dm.dataset_id = ? AND cp.study_id = ? GROUP BY band`, ...bandParams, v.concept.id, d.id, d.study_id)
-      : db.all<{ band: string; n: number }>(`SELECT ${BAND_SQL} AS band, COUNT(*) AS n FROM dataset_member dm JOIN participant p ON p.id = dm.participant_id
-           JOIN participant_coverage cv ON cv.participant_id = dm.participant_id AND cv.concept_id = ? AND cv.n_obs > 0 WHERE dm.dataset_id = ? GROUP BY band`, ...bandParams, v.concept.id, d.id);
+    const m = presentMembersSql(d, v);
+    const rows = db.all<{ band: string; n: number }>(`SELECT ${BAND_SQL} AS band, COUNT(*) AS n FROM (${m.sql}) pm JOIN participant p ON p.id = pm.participant_id GROUP BY band`, ...bandParams, ...m.params);
     const present = new Map(rows.map((r) => [r.band, r.n]));
     const n = rows.reduce((a, r) => a + r.n, 0);
     return {
@@ -192,6 +214,7 @@ export function datasetDetail(orgId: number, id: number, tab: DatasetTab | undef
 
   return {
     ...toSummary(d),
+    tab,
     description: d.description ?? '',
     rowLevelN: kfloorN(rowLevel), summaryOnlyN: kfloorN(total - rowLevel),
     variables, documentation, provenance, missingness, longitudinal, ontology, exportRequests,
@@ -202,21 +225,24 @@ function pruneTree(tree: TreeNode[], keep: Set<string>): TreeNode[] {
   return tree.map((d) => ({ ...d, children: d.children.map((g) => ({ ...g, children: g.children.filter((l) => keep.has(l.slug)) })).filter((g) => g.children.length) })).filter((d) => d.children.length);
 }
 
+/** Workspace: per variable, n = the SAME member subset as the variables tab (presentMembersSql); stats over that subset's latest values. */
 export function workspace(orgId: number, id: number, db: Db = graph()): Workspace {
   const d = datasetForOrg(orgId, id, db);
-  const vars = parseDatasetVars(d.variables_json).map((v) => conceptBySlug(v.slug, db)).filter((c): c is ConceptRow => !!c);
+  const vars = parseDatasetVars(d.variables_json).map((v) => ({ ...v, concept: conceptBySlug(v.slug, db) })).filter((v): v is DatasetVar & { concept: ConceptRow } => !!v.concept);
   const rowLevel = db.get<{ n: number }>("SELECT COUNT(*) AS n FROM dataset_member WHERE dataset_id = ? AND status = 'row_level'", d.id)?.n ?? 0;
   return {
     datasetId: d.id, rowLevelN: kfloorN(rowLevel), summaryOnlyN: kfloorN(d.member_count - rowLevel),
-    variables: vars.map((c) => {
-      const r = db.get<{ n: number; mean: number | null; sq: number | null; min: number | null; max: number | null; any: number }>(
-        `SELECT COUNT(cv.last_value_num) AS n, AVG(cv.last_value_num) AS mean, AVG(cv.last_value_num * cv.last_value_num) AS sq, MIN(cv.last_value_num) AS min, MAX(cv.last_value_num) AS max, COUNT(*) AS any
-           FROM dataset_member dm JOIN participant_coverage cv ON cv.participant_id = dm.participant_id AND cv.concept_id = ? AND cv.n_obs > 0 WHERE dm.dataset_id = ?`, c.id, d.id);
+    variables: vars.map((v) => {
+      const c = v.concept;
+      const m = presentMembersSql(d, v);
+      const r = db.get<{ n: number; numeric: number; mean: number | null; sq: number | null; min: number | null; max: number | null }>(
+        `SELECT COUNT(*) AS n, COUNT(cv.last_value_num) AS numeric, AVG(cv.last_value_num) AS mean, AVG(cv.last_value_num * cv.last_value_num) AS sq, MIN(cv.last_value_num) AS min, MAX(cv.last_value_num) AS max
+           FROM (${m.sql}) pm LEFT JOIN participant_coverage cv ON cv.participant_id = pm.participant_id AND cv.concept_id = ? AND cv.n_obs > 0`, ...m.params, c.id);
       const n = r?.n ?? 0;
-      const numeric = n > 0 && r?.mean !== null && r?.mean !== undefined;
+      const numeric = (r?.numeric ?? 0) > 0 && r?.mean !== null && r?.mean !== undefined;
       const sd = numeric && r ? Math.sqrt(Math.max(0, (r.sq ?? 0) - (r.mean ?? 0) ** 2)) : null;
       const round = (x: number | null | undefined) => (x === null || x === undefined ? null : Math.round(x * 10) / 10);
-      return { slug: c.slug, label: datasetLabel(c), n: kfloorN(numeric ? n : r?.any ?? 0), mean: numeric ? round(r!.mean) : null, sd: numeric ? round(sd) : null, min: numeric ? round(r!.min) : null, max: numeric ? round(r!.max) : null, unit: c.unit };
+      return { slug: c.slug, label: datasetLabel(c), n: kfloorN(n), mean: numeric ? round(r!.mean) : null, sd: numeric ? round(sd) : null, min: numeric ? round(r!.min) : null, max: numeric ? round(r!.max) : null, unit: c.unit };
     }),
   };
 }

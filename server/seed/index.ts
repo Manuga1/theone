@@ -31,9 +31,9 @@ export function seedConcepts(db: Db): Map<string, number> {
   db.tx(() => {
     for (const c of flattenOntology()) {
       const id = db.run(
-        'INSERT INTO concept (slug, parent_id, name, level, weight, unit, data_type, min_span_days, freshness_days, collection_method, enrichable, comp_cents, device_cost_cents, in_ring, in_list, sort_order, description, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        'INSERT INTO concept (slug, parent_id, name, level, weight, unit, data_type, min_span_days, freshness_days, collection_method, enrichable, comp_cents, device_cost_cents, reuse_comp_cents, in_ring, in_list, sort_order, description, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
         c.slug, c.parentSlug ? ids.get(c.parentSlug)! : null, c.name, c.level, c.weight, c.unit, c.dataType, c.minSpanDays, c.freshnessDays, c.method, c.enrichable ? 1 : 0,
-        c.compCents, c.deviceCostCents, c.inRing ? 1 : 0, c.inList ? 1 : 0, c.sortOrder, c.description, now,
+        c.compCents, c.deviceCostCents, c.reuseCompCents, c.inRing ? 1 : 0, c.inList ? 1 : 0, c.sortOrder, c.description, now,
       ).lastId;
       ids.set(c.slug, id);
     }

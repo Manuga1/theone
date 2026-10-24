@@ -33,7 +33,8 @@ import BRequestVariable from './buyer/RequestVariable';
 import BAnalytics from './buyer/Analytics';
 import BAdmin from './buyer/Admin';
 
-const Gallery = lazy(() => import('./dev/Gallery'));
+// Dev-only: in production builds the branch is dead code, so neither the route nor the chunk exists.
+const Gallery = import.meta.env.DEV ? lazy(() => import('./dev/Gallery')) : null;
 
 function ParticipantLayout() {
   return (
@@ -97,8 +98,8 @@ export default function App() {
       </Route>
 
       {/* Dev-only component gallery with fixture props (the one place sample numbers are allowed). */}
-      <Route path="/dev/gallery" element={<Fallback><Gallery /></Fallback>} />
-      <Route path="/dev/gallery/:section" element={<Fallback><Gallery /></Fallback>} />
+      {Gallery && <Route path="/dev/gallery" element={<Fallback><Gallery /></Fallback>} />}
+      {Gallery && <Route path="/dev/gallery/:section" element={<Fallback><Gallery /></Fallback>} />}
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

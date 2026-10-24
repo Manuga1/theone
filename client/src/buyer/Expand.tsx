@@ -3,11 +3,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Megaphone } from 'lucide-react';
 import type { Campaign, Estimate } from '@shared/api-types';
-import type { CampaignVariable } from '@shared/requirement';
+import type { CampaignVariable, VariableMode } from '@shared/requirement';
 import { api } from '../api';
 import { useAction } from '../useAction';
 import { Card, ErrorBox, KNum, Money, MoneyK, Num, kfloor, money } from '../components';
-import { CohortStepBar, CohortSubNav, PageState, useCohort, useOntologyLeaves, variablesFromCriteria, MODE_LABEL, requirementLabel, BlockedBanner } from './shared';
+import { CohortStepBar, CohortSubNav, PageState, useCohort, useOntologyLeaves, variablesFromCriteria, variableFeeCents, canCollect, MODE_OPTIONS, requirementLabel, BlockedBanner } from './shared';
 
 export default function ExpandPage() {
   const { id } = useParams();
@@ -16,6 +16,7 @@ export default function ExpandPage() {
   const ont = useOntologyLeaves();
   const [targetN, setTargetN] = useState<number>(0);
   const [termMonths, setTermMonths] = useState(12);
+  const [modes, setModes] = useState<Partial<Record<string, VariableMode>>>({});
   const [estimate, setEstimate] = useState<Estimate | null>(null);
   const [err, setErr] = useState<Error | null>(null);
   const [pending, setPending] = useState(false);
@@ -27,7 +28,7 @@ export default function ExpandPage() {
     if (d && targetN === 0) setTargetN(Math.max(100, Math.round(d.preview.matrix.estimatedAfter.point / 100) * 100));
   }, [d, targetN]);
 
-  const variables: CampaignVariable[] = useMemo(() => (d && ont.bySlug.size ? variablesFromCriteria(d.criteria, ont.bySlug) : []), [d, ont.bySlug]);
+  const variables: CampaignVariable[] = useMemo(() => (d && ont.bySlug.size ? variablesFromCriteria(d.criteria, ont.bySlug, modes) : []), [d, ont.bySlug, modes]);
   const collect = variables.filter((v) => v.mode !== 'reuse');
 
   useEffect(() => {
@@ -66,7 +67,7 @@ export default function ExpandPage() {
       {id && <CohortSubNav id={id} active="expand" />}
       <PageState error={q.error} loading={q.loading && !d}>
         {d && (
-          <div className="grid gap-16" style={{ gridTemplateColumns: '380px minmax(0, 1fr)' }}>
+          <div className="grid gap-16" style={{ gridTemplateColumns: '440px minmax(0, 1fr)' }}>
             <div className="col gap-16">
               <Card title="Target complete N">
                 <BlockedBanner consent={d.preview.consent} />
@@ -74,23 +75,42 @@ export default function ExpandPage() {
                 <div className="tiny faint mt-8">Ready now <KNum n={d.preview.readyNow} /> · estimated after enrichment {kfloor(d.preview.matrix.estimatedAfter.low)} – {kfloor(d.preview.matrix.estimatedAfter.high)}</div>
                 <label className="field mt-12"><span className="field__label">License term</span><select className="select select--sm" value={termMonths} onChange={(e) => setTermMonths(Number(e.target.value))}>{[6, 12, 18, 24].map((m) => <option key={m} value={m}>{m} months</option>)}</select></label>
               </Card>
-              <Card title="Variables to collect" sub="Defaults from the ontology's collection protocols; reuse where the participant already holds the data.">
+              <Card title="Variables to collect" sub="Defaults from the ontology's collection protocols; reuse where the participant already holds the data. Changing a mode re-runs the estimate.">
                 <div className="table-wrap">
                   <table className="table table--compact">
-                    <thead><tr><th>Variable</th><th>Mode</th><th>Requirement</th><th className="num">Comp</th></tr></thead>
+                    <thead><tr><th>Variable</th><th>Mode</th><th>Requirement</th><th className="num">Fee</th></tr></thead>
                     <tbody>
-                      {variables.map((v) => (
-                        <tr key={v.conceptSlug}>
-                          <td className="strong">{ont.bySlug.get(v.conceptSlug)?.name ?? v.conceptSlug}</td>
-                          <td className="muted">{MODE_LABEL[v.mode]}</td>
-                          <td className="muted">{requirementLabel(v)}</td>
-                          <td className="num">{v.mode === 'reuse' ? '—' : money(v.compCents)}</td>
-                        </tr>
-                      ))}
+                      {variables.map((v) => {
+                        const leaf = ont.bySlug.get(v.conceptSlug);
+                        const collectable = canCollect(leaf);
+                        const fee = variableFeeCents(v, leaf);
+                        return (
+                          <tr key={v.conceptSlug}>
+                            <td className="strong">{leaf?.name ?? v.conceptSlug}</td>
+                            <td>
+                              <select
+                                className="select select--sm"
+                                value={v.mode}
+                                disabled={!collectable}
+                                title={collectable ? MODE_OPTIONS.find((o) => o.key === v.mode)?.hint : 'No collection protocol for this variable — it can only be reused.'}
+                                onChange={(e) => setModes((m) => ({ ...m, [v.conceptSlug]: e.target.value as VariableMode }))}
+                              >
+                                {MODE_OPTIONS.map((o) => <option key={o.key} value={o.key} disabled={o.key !== 'reuse' && !collectable}>{o.label}</option>)}
+                              </select>
+                            </td>
+                            <td className="muted">{requirementLabel(v)}</td>
+                            <td className="num" title={v.mode === 'reuse' ? 'Reuse (license) fee per participant, net' : `Collection comp per participant, net${v.deviceCostCents ? ` · device / test ${money(v.deviceCostCents)}` : ''}`}>
+                              {fee === null ? <span className="faint">—</span> : money(fee)}
+                              <div className="tiny faint">{v.mode === 'reuse' ? 'reuse fee' : v.deviceCostCents ? `+ ${money(v.deviceCostCents)} device` : 'comp'}</div>
+                            </td>
+                          </tr>
+                        );
+                      })}
                       {variables.length === 0 && <tr><td colSpan={4} className="faint">Loading ontology…</td></tr>}
                     </tbody>
                   </table>
                 </div>
+                <div className="tiny faint mt-8">“Collect for all” re-measures ready-now members too; reuse of existing data still pays the participant a license fee.</div>
               </Card>
             </div>
             <div className="col gap-16">

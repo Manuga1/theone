@@ -87,6 +87,10 @@ export function Shell({ side, title, wide, children, state: stateProp, health: h
   const reset = async () => {
     if (!window.confirm('Wipe and regenerate all synthetic demo data?')) return;
     setResetting(true);
+    // The page we were on may show an entity the reseed no longer has (e.g. a study or dataset built during the demo).
+    // Navigate to the persona home BEFORE the reset: react-router navigates in a transition, so a navigate() issued after
+    // the reset would be committed after setResetting(false) and the old page would mount and refetch (404) first.
+    navigate(side === 'buyer' ? '/b' : '/p');
     try {
       await api.post('/demo/reset');
       healthQ.reload();

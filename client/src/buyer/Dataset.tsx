@@ -25,6 +25,10 @@ export default function DatasetPage() {
   if (q.error) return <ErrorBox error={q.error} />;
   const d = q.data;
   if (!d) return <div className="faint small">Loading…</div>;
+  // useApi keeps the previous payload while refetching; a tab-specific section of another tab's payload is empty, so
+  // render a loading row until the response for THIS tab arrives (the server echoes `tab`).
+  const stale = q.loading && d.tab !== undefined && d.tab !== tab;
+  const loadingRow = <div className="faint small">Loading…</div>;
 
   return (
     <div className="col gap-16">
@@ -43,7 +47,8 @@ export default function DatasetPage() {
       <Tabs variant="underline" value={tab} onChange={setTab} items={TABS} />
       <div className="grid gap-16" style={{ gridTemplateColumns: 'minmax(0, 1fr) 340px' }}>
         <Card>
-          {tab === 'variables' && (
+          {stale && loadingRow}
+          {!stale && tab === 'variables' && (
             <div className="table-wrap">
               <table className="table">
                 <thead><tr><th>Variable</th><th>Type</th><th className="num">Members with data</th><th className="num">Missingness</th></tr></thead>
@@ -56,13 +61,13 @@ export default function DatasetPage() {
               </table>
             </div>
           )}
-          {tab === 'documentation' && (
+          {!stale && tab === 'documentation' && (
             <div className="col gap-12">
               {d.documentation.map((s) => <div key={s.title}><div className="h3">{s.title}</div><div className="why mt-8" style={{ whiteSpace: 'pre-line' }}>{s.body}</div></div>)}
               {d.documentation.length === 0 && <div className="rail__empty">No documentation.</div>}
             </div>
           )}
-          {tab === 'provenance' && (
+          {!stale && tab === 'provenance' && (
             <div className="col gap-12">
               {d.provenance.map((v) => (
                 <div key={v.slug}>
@@ -73,7 +78,7 @@ export default function DatasetPage() {
               {d.provenance.length === 0 && <div className="rail__empty">No provenance breakdown.</div>}
             </div>
           )}
-          {tab === 'missingness' && (
+          {!stale && tab === 'missingness' && (
             <div className="table-wrap">
               <table className="table">
                 <thead><tr><th>Variable</th><th className="num">Missing overall</th>{d.missingness[0]?.byGroup.map((g) => <th key={g.label} className="num">{g.label}</th>)}</tr></thead>
@@ -81,7 +86,7 @@ export default function DatasetPage() {
               </table>
             </div>
           )}
-          {tab === 'longitudinal' && (
+          {!stale && tab === 'longitudinal' && (
             <div className="col gap-12">
               {d.longitudinal.map((v) => {
                 const max = Math.max(1, ...v.buckets.map((b) => b.n));
@@ -90,7 +95,7 @@ export default function DatasetPage() {
               {d.longitudinal.length === 0 && <div className="rail__empty">No longitudinal summary.</div>}
             </div>
           )}
-          {tab === 'ontology' && (d.ontology.length ? <ConceptTree domains={d.ontology} showLegend={false} /> : <div className="rail__empty">No ontology slice.</div>)}
+          {!stale && tab === 'ontology' && (d.ontology.length ? <ConceptTree domains={d.ontology} showLegend={false} /> : <div className="rail__empty">No ontology slice.</div>)}
         </Card>
         <div className="col gap-16">
           <Card title="About this dataset" soft><div className="why"><p>{d.description}</p></div></Card>

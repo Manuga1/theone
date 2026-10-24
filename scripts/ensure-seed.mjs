@@ -7,11 +7,13 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const graph = path.join(root, 'data', 'graph.sqlite');
+// Same resolution as server/db/paths.ts and the seed CLI: GRAPH_DB wins, then DATA_DIR/graph.sqlite, then ./data/graph.sqlite.
+const dataDir = process.env.DATA_DIR ?? path.join(root, 'data');
+const graph = process.env.GRAPH_DB ?? path.join(dataDir, 'graph.sqlite');
 const noSeed = process.env.SEED_DISABLED === '1' || process.argv.includes('--no-seed');
 
 if (existsSync(graph)) {
-  console.log('[ensure-seed] data/graph.sqlite present, skipping seed');
+  console.log(`[ensure-seed] ${path.relative(root, graph) || graph} present, skipping seed`);
   process.exit(0);
 }
 const args = ['server/seed/index.ts', ...(noSeed ? ['--schema-only'] : [])];

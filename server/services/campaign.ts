@@ -10,9 +10,10 @@ import { graph } from '../db/graph';
 import type { Db } from '../db/driver';
 import { badRequest, forbidden, notFound, conflict } from '../errors';
 import { logActivity } from './activity';
-import { kfloorN, orgConsent, recruitablePool, evaluateCohort, spanLabel } from './cohort';
+import { kfloorN, orgConsent, recruitablePool, evaluateCohort, spanLabel, type ReadyMember } from './cohort';
+import { enroll, loadOpportunity, offerComp, reuseFeeFor } from './consent';
 import { buildEstimate, contactsForTarget } from './estimate';
-import { conceptBySlug, concepts } from './ontology';
+import { conceptBySlug, concepts, reuseFeeCents } from './ontology';
 import { makeSalt, scopedPseudonym } from './pseudonym';
 import { assertTransition, CAMPAIGN_TRANSITIONS, OPPORTUNITY_TRANSITIONS, REPLACEABLE_STATUSES, STARTED_STATUSES, sqlList } from './state';
 import { currentDataset } from './dataset';
@@ -68,7 +69,7 @@ const COUNTER_SQL = (where: string) => `
          SUM(CASE WHEN op.status IN ${sqlList(STARTED_STATUSES)} THEN 1 ELSE 0 END) AS started,
          SUM(CASE WHEN op.status IN ('paid','rejected','verified') THEN 1 ELSE 0 END) AS completed,
          SUM(CASE WHEN op.status = 'paid' THEN 1 ELSE 0 END) AS quality,
-         SUM(CASE WHEN op.status IN ${sqlList(REPLACEABLE_STATUSES)} AND (op.status <> 'declined' OR op.viewed_at IS NOT NULL) THEN 1 ELSE 0 END) AS need
+         SUM(CASE WHEN op.status IN ${sqlList(REPLACEABLE_STATUSES)} AND (op.status <> 'declined' OR op.viewed_at IS NOT NULL) AND op.replaced_by_id IS NULL THEN 1 ELSE 0 END) AS need
     FROM opportunity op JOIN campaign cp ON cp.id = op.campaign_id WHERE ${where}`;
 
 function toCounters(a: CounterAgg | undefined, eligible: number, floor: boolean): StudyCounters {
@@ -78,7 +79,15 @@ function toCounters(a: CounterAgg | undefined, eligible: number, floor: boolean)
     completed: f(a?.completed ?? 0), qualityAccepted: f(a?.quality ?? 0), needReplacement: f(a?.need ?? 0),
   };
 }
+/** The study's headline counters = its ROOT campaign only (variable-request child campaigns carry their own; see campaignCounters). */
 export function studyCounters(studyId: number, db: Db = graph(), floor = true): StudyCounters {
+  if (!db.tableExists('opportunity')) return toCounters(undefined, 0, floor);
+  const root = rootCampaign(studyId, db);
+  if (!root) return toCounters(undefined, 0, floor);
+  return toCounters(db.get<CounterAgg>(COUNTER_SQL('op.campaign_id = ?'), root.id), root.eligible_n, floor);
+}
+/** Counters over EVERY campaign of the study (used for the recontact guard). */
+export function studyCountersAll(studyId: number, db: Db = graph(), floor = true): StudyCounters {
   if (!db.tableExists('opportunity')) return toCounters(undefined, 0, floor);
   const root = rootCampaign(studyId, db);
   return toCounters(db.get<CounterAgg>(COUNTER_SQL('cp.study_id = ?'), studyId), root?.eligible_n ?? 0, floor);
@@ -124,6 +133,7 @@ export function validateVariables(raw: unknown, db: Db): CampaignVariable[] {
     if (!v || typeof v.conceptSlug !== 'string' || !conceptBySlug(v.conceptSlug, db)) throw badRequest(`unknown concept ${v?.conceptSlug}`);
     if (!['reuse', 'collect_if_missing', 'collect_all'].includes(v.mode)) throw badRequest(`invalid mode for ${v.conceptSlug}`);
     if (!v.requirement || typeof v.requirement !== 'object') throw badRequest(`requirement missing for ${v.conceptSlug}`);
+    if (v.mode === 'reuse' && !(Number(v.compCents) > 0)) v.compCents = reuseFeeCents(conceptBySlug(v.conceptSlug, db)!); // reuse = license fee, never free
     if (!Number.isFinite(v.compCents) || v.compCents < 0) throw badRequest(`compCents invalid for ${v.conceptSlug}`);
     v.deviceCostCents = Number.isFinite(v.deviceCostCents) ? v.deviceCostCents : 0;
   }
@@ -172,7 +182,13 @@ export function requestProposal(orgId: number, id: number, db: Db = graph()): Ca
   return getCampaign(orgId, id, db);
 }
 
-/** Launch: compute the recruitable pool, offer `contacts` opportunities (Alex always included when recruitable). No licenses. */
+/**
+ * Launch: compute the recruitable pool and offer `contacts` collection opportunities (Alex always included when
+ * recruitable). When the campaign reuses ≥ 1 variable, every READY-NOW cohort member (all variables satisfied
+ * historically, recontactable, consent ok, no open opportunity in this study) is ALSO offered a reuse-only opportunity
+ * whose compensation is the license fee (Σ reuse fees) — Alex first. Offers mint no license; a member who has
+ * pre-authorised reuse-only licenses accepts that offer at once (license + ledger row through the same enroll()).
+ */
 export function launchCampaign(orgId: number, id: number, db: Db = graph()): Campaign {
   const { campaign, study } = campaignForOrg(orgId, id, db);
   assertTransition('campaign', CAMPAIGN_TRANSITIONS, campaign.status, 'active');
@@ -181,15 +197,53 @@ export function launchCampaign(orgId: number, id: number, db: Db = graph()): Cam
   const variables = parseVariables(campaign.variables_json);
   const now = nowIso();
   db.tx(() => {
-    const { ev, members } = recruitablePool(studyCriteria(study), { orgId, variables, openOpportunityStudyId: study.id }, db);
+    const { ev, members, ready } = recruitablePool(studyCriteria(study), { orgId, variables, openOpportunityStudyId: study.id }, db);
     const estimate = buildEstimate({ targetN: campaign.target_complete_n, readyNow: ev.readyNow, groups: ev.groups, variables });
     const contacts = contactsForTarget(campaign.target_complete_n, members.length);
     const offered = offerOpportunities(db, campaign, variables, members, contacts, new Rng(`launch:${campaign.id}`), now);
-    db.run("UPDATE campaign SET status = 'active', launched_at = ?, eligible_n = ?, estimate_json = ? WHERE id = ?", now.slice(0, 10), ev.recontactBase, JSON.stringify({ ...estimate, contacts }), id);
+    // ready-now members hold every variable, so they always get a reuse-only offer (fee = Σ reuse fees of what they hold);
+    // offerReuseOnly is a no-op when the ready set is empty (e.g. any collect_all variable)
+    const reuseOnly = offerReuseOnly(db, campaign, variables, ready, now);
+    db.run("UPDATE campaign SET status = 'active', launched_at = ?, eligible_n = ?, estimate_json = ? WHERE id = ?", now.slice(0, 10), ev.recontactBase, JSON.stringify({ ...estimate, contacts, reuseOnlyOffered: reuseOnly.offered }), id);
     db.run("UPDATE study SET status = 'active', updated_at = ? WHERE id = ?", now, study.id);
-    logActivity(db, { orgId, kind: 'campaign_launched', text: `${campaign.name} launched — ${offered.toLocaleString('en-US')} participants invited`, occurredAt: now });
+    const reuseText = reuseOnly.offered ? `, ${reuseOnly.offered.toLocaleString('en-US')} ready-now participants offered a reuse-only license${reuseOnly.preauthorized ? ` (${reuseOnly.preauthorized.toLocaleString('en-US')} pre-authorised)` : ''}` : '';
+    logActivity(db, { orgId, kind: 'campaign_launched', text: `${campaign.name} launched — ${offered.toLocaleString('en-US')} participants invited${reuseText}`, occurredAt: now });
   });
   return getCampaign(orgId, id, db);
+}
+
+/**
+ * License fee of a reuse-only offer (nothing to collect): Σ reuse fees of the `reuse` variables AND of every
+ * `collect_if_missing` variable (a ready-now member holds them all, so they are licensed, not collected).
+ */
+export function reuseFeeOf(variables: CampaignVariable[], db: Db = graph()): number {
+  return reuseFeeFor(variables, [], db);
+}
+
+/** Reuse-only offers (missing_concepts = []) for ready-now members; the detailed participant goes first. Pre-authorised members accept immediately. */
+export function offerReuseOnly(db: Db, campaign: CampaignRow, variables: SeedVariable[], ready: ReadyMember[], at: string): { offered: number; preauthorized: number } {
+  if (!ready.length) return { offered: 0, preauthorized: 0 };
+  const detailed = new Set(db.all<{ id: number }>('SELECT id FROM participant WHERE is_detailed = 1').map((r) => r.id));
+  const order = ready.slice().sort((a, b) => Number(detailed.has(b.pid)) - Number(detailed.has(a.pid)) || a.pid - b.pid);
+  const fee = reuseFeeOf(variables, db);
+  const study = studyRow(campaign.study_id, db);
+  let preauthorized = 0;
+  for (const m of order) {
+    const oppId = db.run("INSERT INTO opportunity (campaign_id, participant_id, status, missing_concepts_json, comp_max_cents, offered_at, created_at) VALUES (?,?,'offered','[]',?,?,?)", campaign.id, m.pid, fee, at, at).lastId;
+    if (detailed.has(m.pid)) {
+      logActivity(db, { participantId: m.pid, kind: 'opportunity', text: `New opportunity: ${study?.name ?? campaign.name} — ${study?.org_name ?? ''} (reuse-only license, nothing to collect)`.trim(), amountCents: fee, occurredAt: at });
+    }
+    if (m.preauthorized && !detailed.has(m.pid)) {
+      // pre-authorised reuse-only: the participant consented in advance → accept now (the same accept core as P7)
+      db.run("UPDATE opportunity SET status = 'accepted', viewed_at = ?, reviewed_at = ?, responded_at = ? WHERE id = ?", at, at, at, oppId);
+      const joined = loadOpportunity(oppId, db)!;
+      const r = enroll(db, joined, { at, termStart: at.slice(0, 10) });
+      db.run("UPDATE opportunity SET status = 'paid', completed_at = ? WHERE id = ?", at, oppId);
+      db.run("UPDATE enrollment SET status = 'completed', completed_at = ? WHERE id = ?", at, r.enrollmentId);
+      preauthorized++;
+    }
+  }
+  return { offered: order.length, preauthorized };
 }
 
 export type PoolMember = { pid: number; slugs: string[] };
@@ -204,7 +258,8 @@ export function offerOpportunities(db: Db, campaign: CampaignRow, variables: See
   const seen = new Set(chosen.map((m) => m.pid));
   const collectSlugs = variables.filter((v) => v.mode !== 'reuse').map((v) => v.conceptSlug);
   for (const pid of extraPids) if (!seen.has(pid)) { seen.add(pid); chosen.push({ pid, slugs: collectSlugs }); }
-  const comp = (slugs: string[]) => variables.reduce((a, v) => a + (v.mode === 'reuse' || slugs.includes(v.conceptSlug) ? v.compCents : 0), 0);
+  // comp = collection comps of the member's missing variables + license fees of what is reused (reuse vars + held collect_if_missing vars)
+  const comp = (slugs: string[]) => offerComp(variables, slugs, db);
   for (const m of chosen) {
     db.run("INSERT INTO opportunity (campaign_id, participant_id, status, missing_concepts_json, comp_max_cents, offered_at, created_at) VALUES (?,?,'offered',?,?,?,?)",
       campaign.id, m.pid, JSON.stringify(m.slugs), comp(m.slugs), at, at);
@@ -255,33 +310,55 @@ export function studyVariables(studyId: number, db: Db = graph()): (SeedVariable
   return out;
 }
 
-/** Per-variable coverage over STARTED members: collect variables count verified contributions, reuse variables count historical data. */
+/**
+ * Per-variable coverage over STARTED members of the campaign that carries the variable (root or a child campaign):
+ * `collect_all` counts verified contributions; `reuse` counts historical data; `collect_if_missing` counts a verified
+ * contribution OR — for members who were not asked to collect it (no contribution row) — historical data that satisfies
+ * the requirement (the variable was licensed, not collected).
+ */
 export function studyCoverage(studyId: number, db: Db = graph(), floor = true): StudyDetail['coverage'] {
-  const started = db.get<{ n: number }>(`SELECT COUNT(DISTINCT op.participant_id) AS n FROM opportunity op JOIN campaign cp ON cp.id = op.campaign_id WHERE cp.study_id = ? AND op.status IN ${sqlList(STARTED_STATUSES)}`, studyId)?.n ?? 0;
+  const startedBy = new Map<number, number>();
+  const startedOf = (campaignId: number) => {
+    let n = startedBy.get(campaignId);
+    if (n === undefined) {
+      n = db.get<{ n: number }>(`SELECT COUNT(DISTINCT op.participant_id) AS n FROM opportunity op WHERE op.campaign_id = ? AND op.status IN ${sqlList(STARTED_STATUSES)}`, campaignId)?.n ?? 0;
+      startedBy.set(campaignId, n);
+    }
+    return n;
+  };
   const f = floor ? kfloorN : (n: number) => n;
   return studyVariables(studyId, db).map((v) => {
     const k = conceptBySlug(v.conceptSlug, db);
+    const started = startedOf(v.campaignId);
     let verified = 0;
-    if (k && v.mode !== 'reuse') {
+    if (k && v.mode === 'collect_all') {
       verified = db.get<{ n: number }>(
-        `SELECT COUNT(DISTINCT c.participant_id) AS n FROM contribution c JOIN opportunity op ON op.id = c.opportunity_id JOIN campaign cp ON cp.id = op.campaign_id
-          WHERE cp.study_id = ? AND c.concept_id = ? AND c.status = 'verified' AND op.status IN ${sqlList(STARTED_STATUSES)}`, studyId, k.id)?.n ?? 0;
+        `SELECT COUNT(DISTINCT c.participant_id) AS n FROM contribution c JOIN opportunity op ON op.id = c.opportunity_id
+          WHERE op.campaign_id = ? AND c.concept_id = ? AND c.status = 'verified' AND op.status IN ${sqlList(STARTED_STATUSES)}`, v.campaignId, k.id)?.n ?? 0;
+    } else if (k && v.mode === 'collect_if_missing') {
+      const h = v.requirement.historical;
+      verified = db.get<{ n: number }>(
+        `SELECT COUNT(DISTINCT op.participant_id) AS n FROM opportunity op
+          WHERE op.campaign_id = ? AND op.status IN ${sqlList(STARTED_STATUSES)}
+            AND (EXISTS (SELECT 1 FROM contribution c WHERE c.opportunity_id = op.id AND c.concept_id = ? AND c.status = 'verified')
+              OR (NOT EXISTS (SELECT 1 FROM contribution c WHERE c.opportunity_id = op.id AND c.concept_id = ?)
+                  AND EXISTS (SELECT 1 FROM participant_coverage cv WHERE cv.participant_id = op.participant_id AND cv.concept_id = ? AND cv.n_obs > 0 AND cv.span_days >= ? AND cv.best_prov_rank >= ?)))`,
+        v.campaignId, k.id, k.id, k.id, h?.minSpanDays ?? 0, h?.minProvRank ?? 0)?.n ?? 0;
     } else if (k) {
       const h = v.requirement.historical;
       verified = db.get<{ n: number }>(
-        `SELECT COUNT(DISTINCT op.participant_id) AS n FROM opportunity op JOIN campaign cp ON cp.id = op.campaign_id
+        `SELECT COUNT(DISTINCT op.participant_id) AS n FROM opportunity op
            JOIN participant_coverage cv ON cv.participant_id = op.participant_id AND cv.concept_id = ? AND cv.n_obs > 0 AND cv.span_days >= ? AND cv.best_prov_rank >= ?
-          WHERE cp.study_id = ? AND op.status IN ${sqlList(STARTED_STATUSES)}`, k.id, h?.minSpanDays ?? 0, h?.minProvRank ?? 0, studyId)?.n ?? 0;
+          WHERE op.campaign_id = ? AND op.status IN ${sqlList(STARTED_STATUSES)}`, k.id, h?.minSpanDays ?? 0, h?.minProvRank ?? 0, v.campaignId)?.n ?? 0;
     }
-    return { slug: v.conceptSlug, label: v.label ?? shortName(v.conceptSlug), pct: started ? Math.round((verified / started) * 1000) / 10 : 0, verified: f(verified), started: f(started) };
+    return { slug: v.conceptSlug, label: v.label ?? shortName(v.conceptSlug), pct: started ? Math.round((verified / started) * 1000) / 10 : 0, verified: f(verified), started: f(started), campaignId: v.campaignId };
   });
 }
 
 export function studyDetail(orgId: number, id: number, db: Db = graph()): StudyDetail {
   const s = studyForOrg(orgId, id, db);
-  const counters = studyCounters(s.id, db, false);
-  const need = counters.needReplacement;
-  const campaigns = db.all<CampaignRow>('SELECT * FROM campaign WHERE study_id = ? ORDER BY id', s.id).map((c) => ({ id: c.id, name: c.name, status: c.status, parentCampaignId: c.parent_campaign_id }));
+  const need = studyCountersAll(s.id, db, false).needReplacement;
+  const campaigns = db.all<CampaignRow>('SELECT * FROM campaign WHERE study_id = ? ORDER BY id', s.id).map((c) => ({ id: c.id, name: c.name, status: c.status, parentCampaignId: c.parent_campaign_id, counters: campaignCounters(c.id, db) }));
   return {
     ...toSummary(s, db),
     cohortId: s.cohort_definition_id,
@@ -348,19 +425,20 @@ export function recontactStudy(orgId: number, id: number, db: Db = graph()): { r
   let replaced = 0, offered = 0, poolExhausted = false;
   db.tx(() => {
     for (const c of db.all<CampaignRow>("SELECT * FROM campaign WHERE study_id = ? AND status = 'active' ORDER BY id", s.id)) {
-      const stale = db.all<{ id: number; status: string }>(`SELECT id, status FROM opportunity WHERE campaign_id = ? AND status IN ${sqlList(REPLACEABLE_STATUSES)} AND (status <> 'declined' OR viewed_at IS NOT NULL) ORDER BY id`, c.id);
+      const stale = db.all<{ id: number; status: string }>(`SELECT id, status FROM opportunity WHERE campaign_id = ? AND status IN ${sqlList(REPLACEABLE_STATUSES)} AND (status <> 'declined' OR viewed_at IS NOT NULL) AND replaced_by_id IS NULL ORDER BY id`, c.id);
       if (!stale.length) continue;
       const variables = parseVariables(c.variables_json);
       const { members } = recruitablePool(studyCriteria(s), { orgId, variables, openOpportunityCampaignId: c.id }, db);
       const rng = new Rng(`recontact:${c.id}:${db.writeVersion}`);
       const pool = rng.shuffle(members.slice());
-      const comp = (slugs: string[]) => variables.reduce((a, v) => a + (v.mode === 'reuse' || slugs.includes(v.conceptSlug) ? v.compCents : 0), 0);
+      const comp = (slugs: string[]) => offerComp(variables, slugs, db);
       for (const o of stale) {
         const m = pool.pop();
         if (!m) { poolExhausted = true; break; }
         const newId = db.run("INSERT INTO opportunity (campaign_id, participant_id, status, missing_concepts_json, comp_max_cents, offered_at, created_at) VALUES (?,?,'offered',?,?,?,?)", c.id, m.pid, JSON.stringify(m.slugs), comp(m.slugs), now, now).lastId;
+        // the original keeps its terminal status (counters never go backwards); replaced_by_id links the replacement
         assertTransition('opportunity', OPPORTUNITY_TRANSITIONS, o.status as never, 'replaced');
-        db.run("UPDATE opportunity SET status = 'replaced', replaced_by_id = ? WHERE id = ?", newId, o.id);
+        db.run('UPDATE opportunity SET replaced_by_id = ? WHERE id = ?', newId, o.id);
         replaced++; offered++;
       }
     }
@@ -369,6 +447,6 @@ export function recontactStudy(orgId: number, id: number, db: Db = graph()): { r
       logActivity(db, { orgId, kind: 'recontact', text: `${s.name}: ${offered.toLocaleString('en-US')} replacement participants invited`, occurredAt: now });
     }
   });
-  if (!replaced && !offered && studyCounters(s.id, db, false).needReplacement === 0) throw conflict('no participants need replacement');
+  if (!replaced && !offered && studyCountersAll(s.id, db, false).needReplacement === 0) throw conflict('no participants need replacement');
   return { replaced, offered, poolExhausted, counters: studyCounters(s.id, db) };
 }

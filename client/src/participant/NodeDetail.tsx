@@ -5,7 +5,7 @@ import { Database, ShieldCheck, FlaskConical, Users, ChevronRight } from 'lucide
 import type { NodeDetail } from '@shared/api-types';
 import { PROVENANCE_LABEL } from '@shared/provenance';
 import { useApi } from '../hooks';
-import { Card, Tabs, StatePill, Pill, BPChart, LineageChain, TimelineRail, ErrorBox, Money, Num, money } from '../components';
+import { Card, Tabs, StatePill, Pill, LazyBPChart, LineageChain, TimelineRail, ErrorBox, Money, Num, money } from '../components';
 import { dateLong as fmtDate } from '@shared/fmt';
 
 type Tab = 'overview' | 'timeline' | 'lineage' | 'research';
@@ -24,8 +24,9 @@ function SourceCards({ d }: { d: NodeDetail }) {
 }
 
 function ResearchCards({ d }: { d: NodeDetail }) {
+  // Stacked: these live in the 360px aside, where two columns wrap every label onto three lines.
   return (
-    <div className="grid grid--2">
+    <div className="col gap-8">
       <Card soft tight>
         <div className="row gap-8"><span className="list__icon list__icon--purple"><FlaskConical /></span><div><div className="strong">Licensed in {d.research.licenses} {d.research.licenses === 1 ? 'study' : 'studies'}</div><div className="small muted">Lifetime earnings: <strong><Money cents={d.research.earningsCents} /></strong></div></div></div>
       </Card>
@@ -68,7 +69,7 @@ export default function NodeDetailPage() {
           <div className="col gap-16">
             <Card className="chart-card">
               {hasSeries ? (
-                <BPChart series={d.series} title={d.name} unit={d.unit} yDomain="auto" />
+                <LazyBPChart series={d.series} title={d.name} unit={d.unit} yDomain="auto" />
               ) : (
                 <div className="rail__empty">
                   {d.state === 'missing' ? 'No observations yet for this variable.' : `${d.summary.nObs} observations between ${d.summary.firstAt ? fmtDate(d.summary.firstAt) : '—'} and ${d.summary.lastAt ? fmtDate(d.summary.lastAt) : '—'} (no time series view).`}

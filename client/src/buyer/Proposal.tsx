@@ -41,14 +41,15 @@ export default function ProposalPage() {
             <Card title={c.name} sub={`Target complete N ${c.targetN.toLocaleString('en-US')} · ${c.licenseTermMonths}-month license · created ${c.createdAt.slice(0, 10)}`} right={<Pill variant={STATUS[c.status].variant}>{STATUS[c.status].label}</Pill>}>
               <div className="table-wrap">
                 <table className="table">
-                  <thead><tr><th>Variable</th><th>Mode</th><th>Requirement</th><th className="num">Participant comp</th><th className="num">Device / test</th></tr></thead>
+                  <thead><tr><th>Variable</th><th>Mode</th><th>Requirement</th><th className="num">Participant comp / fee</th><th className="num">Device / test</th></tr></thead>
                   <tbody>
                     {c.variables.map((v) => (
-                      <tr key={v.conceptSlug}><td className="strong">{v.name}</td><td className="muted">{MODE_LABEL[v.mode]}</td><td className="muted">{requirementLabel(v)}</td><td className="num">{v.mode === 'reuse' ? '—' : money(v.compCents)}</td><td className="num">{v.deviceCostCents ? money(v.deviceCostCents) : '—'}</td></tr>
+                      <tr key={v.conceptSlug}><td className="strong">{v.name}</td><td className="muted">{MODE_LABEL[v.mode]}</td><td className="muted">{requirementLabel(v)}</td><td className="num">{v.compCents > 0 ? <>{money(v.compCents)}<div className="tiny faint">{v.mode === 'reuse' ? 'reuse fee' : 'comp'}</div></> : <span className="faint">—</span>}</td><td className="num">{v.deviceCostCents ? money(v.deviceCostCents) : '—'}</td></tr>
                     ))}
                   </tbody>
                 </table>
               </div>
+              <div className="tiny faint mt-8">Modes: “Reuse” licenses data the participant already holds (a reuse fee, no new collection) · “Collect if missing” collects only where absent · “Collect for all” re-measures ready-now members too.</div>
             </Card>
             <Card title="Terms" soft>
               <div className="why">

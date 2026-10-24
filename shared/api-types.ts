@@ -32,6 +32,8 @@ export type TreeNode = {
   compCents?: number;
   /** default device / test cost (cents) per collection */
   deviceCostCents?: number;
+  /** additive: license (reuse) fee in net cents when a campaign reuses existing data for this leaf */
+  reuseCompCents?: number;
   /** the platform has a collection protocol for this leaf */
   enrichable?: boolean;
   /** span required for "verified" */
@@ -288,6 +290,8 @@ export type CohortPreview = {
     rows: { label: string; n: number; cells: HeatCell[] }[];
   };
   bars: { slug: string; label: string; pct: number }[];
+  /** additive: what the bars measure (share of the cohort base with ANY data, including data collected by running campaigns) */
+  barsNote?: string;
   consent: { blocked: boolean; reason: string | null };
   timingMs: number;
 };
@@ -304,7 +308,10 @@ export type CostLine = { key: 'participant_comp' | 'devices_testing' | 'data_pre
 export type Estimate = {
   targetN: number;
   pool: number;
+  /** collection contacts (members with ≥ 1 variable to collect) */
   contacts: number;
+  /** additive: ready-now members offered a reuse-only license at launch (set on the stored estimate after launch) */
+  reuseOnlyOffered?: number;
   accepted: number;
   completed: number;
   costLines: CostLine[];
@@ -369,8 +376,10 @@ export type StudySummary = {
 export type StudyDetail = StudySummary & {
   cohortId: number | null;
   cohortSummary: string;
-  campaigns: { id: number; name: string; status: CampaignStatus; parentCampaignId: number | null }[];
-  coverage: { slug: string; label: string; pct: number; verified: number; started: number }[];
+  /** `counters` on StudyDetail/StudySummary are the ROOT campaign's; each campaign (root and variable-request children) carries its own here (additive) */
+  campaigns: { id: number; name: string; status: CampaignStatus; parentCampaignId: number | null; counters: StudyCounters }[];
+  /** per-variable coverage; `started` is the denominator of the campaign that collects/reuses the variable */
+  coverage: { slug: string; label: string; pct: number; verified: number; started: number; campaignId?: number }[];
   licenseTermMonths: number;
   replacementNote: string;
   lastAdvancedDays: number;
@@ -386,6 +395,8 @@ export type DatasetTab = 'variables' | 'documentation' | 'provenance' | 'missing
 export type DatasetVariable = { slug: string; label: string; type: 'Structured' | 'Time series' | 'File/variants' | 'DICOM'; missingPct: number; n: number };
 export type DatasetSummary = { id: number; studyId: number; studyName: string; version: number; builtAt: string; memberCount: number; status: 'current' | 'superseded' };
 export type Dataset = DatasetSummary & {
+  /** additive: the tab this payload was built for (`?tab=`), or undefined when every tab is included */
+  tab?: DatasetTab;
   description: string;
   rowLevelN: number;
   summaryOnlyN: number;

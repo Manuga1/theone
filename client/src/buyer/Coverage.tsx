@@ -45,7 +45,7 @@ export default function CoveragePage() {
               <BlockedBanner consent={p.consent} />
               <Heatmap heatmap={p.heatmap} />
               <div className="divider" />
-              <CoverageBars bars={p.bars} title="Coverage counts (share of the clinical-match base with any data)" />
+              <CoverageBars bars={p.bars} title="Coverage counts" sub={p.barsNote ?? 'Share of the cohort base with any data for the variable, including data collected by running campaigns'} />
             </Card>
             <div className="col gap-16">
               <Card title="Minimum provenance" sub="Per required modality. Verification is provenance: a device beats a self-report.">

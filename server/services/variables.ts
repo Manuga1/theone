@@ -12,13 +12,19 @@ import { logActivity } from './activity';
 import { campaignRow, getCampaign, offerOpportunities, parseVariables, rootCampaign, studyCriteria, studyForOrg, type StudyRow } from './campaign';
 import { evaluateCohort, orgConsent, recruitablePool } from './cohort';
 import { buildEstimate, contactsForTarget } from './estimate';
-import { conceptBySlug, leaves, type ConceptRow } from './ontology';
+import { conceptBySlug, leaves, reuseFeeCents, type ConceptRow } from './ontology';
 
 const METHODS: ProtocolRequirement['method'][] = ['device', 'protocol', 'survey', 'photo', 'upload', 'kit'];
 
+/** The root campaign's reuse variables, fees included: a child campaign's license carries the same reuse fee as the root's. */
 function reuseVariables(study: StudyRow, db: Db): CampaignVariable[] {
   const root = rootCampaign(study.id, db);
-  return root ? parseVariables(root.variables_json).filter((v) => v.mode === 'reuse').map((v) => ({ conceptSlug: v.conceptSlug, mode: 'reuse' as const, requirement: v.requirement, compCents: 0, deviceCostCents: 0 })) : [];
+  return root
+    ? parseVariables(root.variables_json).filter((v) => v.mode === 'reuse').map((v) => ({
+        conceptSlug: v.conceptSlug, mode: 'reuse' as const, requirement: v.requirement, deviceCostCents: 0,
+        compCents: v.compCents > 0 ? v.compCents : reuseFeeCents(conceptBySlug(v.conceptSlug, db) ?? { comp_cents: 0, reuse_comp_cents: 0 }),
+      }))
+    : [];
 }
 
 function collectVariable(slug: string, c: ConceptRow | undefined, protocol: { method: string; durationDays: number; trials?: number; device?: string }, minProvRank: number, compCents: number | undefined): CampaignVariable {

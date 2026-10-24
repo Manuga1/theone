@@ -115,7 +115,9 @@ describe('the loop (scale 0.05)', () => {
     expect(d.reviewed).toBe(false);
     expect(d.campaignId).toBe(childCampaignId);
     expect(d.consent.perTask.map((p) => p.conceptSlug)).toEqual([MICROBIOME]);
-    expect(d.compCents).toBe(9000);
+    expect(d.title).toBe('Gut microbiome collection'); // a child campaign is titled by its campaign name
+    expect(d.consent.reusedCompCents).toBe(4000); // the root's reuse variables (EHR 1,500 + exome 2,000 + medications 500) travel with the child campaign
+    expect(d.compCents).toBe(9000 + 4000);
     await ppost(`/opportunities/${microOppId}/review`).expect(200);
     d = (await pget(`/opportunities/${microOppId}`)).body as OpportunityDetail;
     expect(d.reviewed).toBe(true);
@@ -126,7 +128,8 @@ describe('the loop (scale 0.05)', () => {
     microLicenseId = r.licenseId;
     const ledger = (await pget('/ledger')).body as ParticipantLedger;
     expect(ledger.entries).toHaveLength(ledgerBefore.entries.length + 1);
-    expect(ledger.entries[0]).toMatchObject({ kind: 'license_fee', licenseId: r.licenseId, licenseStatus: 'active', studyName: 'Metabolic Monitoring Study' });
+    expect(ledger.entries[0]).toMatchObject({ kind: 'license_fee', licenseId: r.licenseId, licenseStatus: 'active', studyName: 'Gut microbiome collection', participantCents: 4000, grossCents: 4444, platformCents: 444 });
+    expect(ledger.lifetimeEarningsCents).toBe(ledgerBefore.lifetimeEarningsCents + 4000); // no more $0 licenses
     expect(ledger.activeLicenses).toBe(ledgerBefore.activeLicenses + 1);
     expect(ledger.licensedUses).toBe(ledgerBefore.licensedUses + 1);
     const opps = (await pget('/opportunities')).body as ParticipantOpportunities;
@@ -145,13 +148,16 @@ describe('the loop (scale 0.05)', () => {
     expect(r.artifactCount).toBeGreaterThan(0);
     await ppost(`/contributions/${cid}/simulate`).expect(409);
     const home = (await pget('/home')).body as ParticipantHome;
-    expect(home.lifetimeEarningsCents).toBe(earningsBefore + 9000);
+    expect(home.lifetimeEarningsCents).toBe(earningsBefore + 4000 + 9000); // reuse license fee + protocol payment
     expect(home.verifiedSources).toBe(13); // the stool kit source was connected by the protocol
     expect(home.whatChanged.some((a) => a.amountCents === 9000)).toBe(true);
     const ledger = (await pget('/ledger')).body as ParticipantLedger;
-    expect(ledger.entries[0]).toMatchObject({ kind: 'contribution_payment', participantCents: 9000, grossCents: 10000, platformCents: 1000 });
+    expect(ledger.entries[0]).toMatchObject({ kind: 'contribution_payment', participantCents: 9000, grossCents: 10000, platformCents: 1000, studyName: 'Gut microbiome collection' });
     const node = (await pget(`/nodes/${MICROBIOME}`)).body as NodeDetail;
     expect(node.state).toBe('verified');
+    // research use: the license gained a (0¢) line for the newly scoped concept and the payment counts toward the node's earnings
+    expect(node.research).toMatchObject({ licenses: 1, earningsCents: 9000 });
+    expect(n('SELECT COUNT(*) AS n FROM license_line ll JOIN concept k ON k.id = ll.concept_id WHERE ll.license_id = ? AND k.slug = ?', microLicenseId, MICROBIOME)).toBe(1);
     expect(node.summary.provenanceClass).toBe('protocol_measurement');
     expect(node.summary.verification).toBe('Protocol verified');
     expect(node.rawVsDerived.artifactCount).toBe(1);
@@ -161,9 +167,14 @@ describe('the loop (scale 0.05)', () => {
     expect(((await pget('/opportunities')).body as ParticipantOpportunities).counts).toEqual({ available: 4, in_progress: 1, past: 6 });
     // buyer side
     const d = (await bget(`/studies/${studyId}`)).body as StudyDetail;
-    expect(d.counters.qualityAccepted).toBe(qualityBefore + 1);
+    expect(d.counters.qualityAccepted).toBe(qualityBefore); // headline counters = the root campaign only
     expect(d.campaigns).toHaveLength(2);
-    expect(d.coverage.find((c) => c.slug === MICROBIOME)!.verified).toBeGreaterThanOrEqual(19);
+    const child = d.campaigns.find((c) => c.id === childCampaignId)!;
+    expect(child.counters.qualityAccepted).toBeGreaterThanOrEqual(1); // Alex (k-floored on the buyer side)
+    expect(d.campaigns.find((c) => c.parentCampaignId === null)!.counters).toEqual(d.counters);
+    const microCov = d.coverage.find((c) => c.slug === MICROBIOME)!;
+    expect(microCov.verified).toBeGreaterThanOrEqual(19);
+    expect(microCov).toMatchObject({ campaignId: childCampaignId, started: child.counters.started }); // the child's started count is the denominator
     const ds = (await bget(`/datasets/${d.datasetId}`)).body as Dataset;
     expect(ds.version).toBe(datasetVersionBefore + 1);
     expect(ds.status).toBe('current');
@@ -202,7 +213,7 @@ describe('the loop (scale 0.05)', () => {
     expect(strength.pct).toBeGreaterThan(80);
   });
 
-  it('B6: draft → proposal → launch offers opportunities but mints NO license; illegal transitions are 409; red-lined org gets 403', async () => {
+  it('B6: draft → proposal → launch offers collection opportunities AND reuse-only offers to ready-now members (Alex first); offers mint no license; illegal transitions 409; red-lined org 403', async () => {
     const cohort = (await bpost('/cohorts', { name: 'Loop cohort', criteria: DEFAULT_CRITERIA }).expect(201)).body as SavedCohortDetail;
     const draft = (await bpost('/campaigns', { cohortId: cohort.id, name: 'Loop campaign', purpose: 'Loop test', targetN: 30, variables: DEFAULT_CAMPAIGN_VARIABLES, licenseTermMonths: 12, useTags: ['clinical_research'] }).expect(201)).body as Campaign;
     expect(draft.status).toBe('draft');
@@ -218,9 +229,39 @@ describe('the loop (scale 0.05)', () => {
     expect(launched.status).toBe('active');
     expect(launched.launchedAt).toBeTruthy();
     expect(launched.counters!.invited).toBeGreaterThanOrEqual(20);
-    expect(launched.counters!.accepted).toBe(0);
-    expect(n('SELECT COUNT(*) AS n FROM license')).toBe(licenses);
-    expect(n("SELECT COUNT(*) AS n FROM opportunity WHERE campaign_id = ? AND status = 'offered'", draft.id)).toBe(launched.estimate.contacts);
+    // reuse-only offers reach every ready-now member (reuse variable present); only members who PRE-AUTHORISED reuse-only licenses accept at once
+    const reuseOnly = launched.estimate.reuseOnlyOffered!;
+    expect(reuseOnly).toBeGreaterThan(1);
+    expect(n("SELECT COUNT(*) AS n FROM opportunity WHERE campaign_id = ? AND missing_concepts_json = '[]'", draft.id)).toBe(reuseOnly);
+    const preauth = n("SELECT COUNT(*) AS n FROM opportunity op JOIN consent_setting cs ON cs.participant_id = op.participant_id WHERE op.campaign_id = ? AND op.missing_concepts_json = '[]' AND cs.preauthorize_reuse_only = 1 AND op.participant_id <> ?", draft.id, pid);
+    expect(n("SELECT COUNT(*) AS n FROM opportunity WHERE campaign_id = ? AND status = 'paid'", draft.id)).toBe(preauth);
+    expect(n('SELECT COUNT(*) AS n FROM license')).toBe(licenses + preauth); // an OFFER never mints a license
+    expect(n("SELECT COUNT(*) AS n FROM opportunity WHERE campaign_id = ? AND status = 'offered'", draft.id)).toBe(launched.estimate.contacts + reuseOnly - preauth);
+    expect(n("SELECT COUNT(*) AS n FROM opportunity WHERE campaign_id = ? AND status NOT IN ('offered','paid')", draft.id)).toBe(0);
+    // Alex (ready-now, not pre-authorised) holds the FIRST reuse-only offer: nothing to collect, compensation = Σ reuse fees of
+    // the reuse variable (EHR 1,200) AND of the collect_if_missing variables he already holds (exome 2,000 + BP 1,400 + food log 825)
+    const REUSE_ONLY_FEE = 1200 + 2000 + 1400 + 825;
+    const alexOpp = t.graph.get<{ id: number; status: string; comp: number; missing: string }>("SELECT id, status, comp_max_cents AS comp, missing_concepts_json AS missing FROM opportunity WHERE campaign_id = ? AND participant_id = ?", draft.id, pid)!;
+    expect(alexOpp).toMatchObject({ status: 'offered', comp: REUSE_ONLY_FEE, missing: '[]' });
+    expect(alexOpp.id).toBe(n("SELECT MIN(id) AS n FROM opportunity WHERE campaign_id = ? AND missing_concepts_json = '[]'", draft.id));
+    const avail = (await pget('/opportunities?tab=available')).body as ParticipantOpportunities;
+    const card = avail.items.find((o) => o.id === alexOpp.id)!;
+    expect(card).toMatchObject({ title: 'Loop campaign', compCents: REUSE_ONLY_FEE, requirements: [], reused: ['EHR history', 'Exome', 'Blood Pressure', 'Food log'] });
+    await ppost(`/opportunities/${alexOpp.id}/view`).expect(200);
+    await ppost(`/opportunities/${alexOpp.id}/review`).expect(200);
+    const detail = (await pget(`/opportunities/${alexOpp.id}`)).body as OpportunityDetail;
+    expect(detail.consent.perTask).toEqual([]);
+    expect(detail.consent.reusedCompCents).toBe(REUSE_ONLY_FEE);
+    const earnings = ((await pget('/ledger')).body as ParticipantLedger).lifetimeEarningsCents;
+    const acc = (await ppost(`/opportunities/${alexOpp.id}/accept`).expect(200)).body as AcceptResult;
+    expect(acc.contributionIds).toEqual([]);
+    expect(n('SELECT COUNT(*) AS n FROM license')).toBe(licenses + preauth + 1);
+    const led = (await pget('/ledger')).body as ParticipantLedger;
+    expect(led.entries[0]).toMatchObject({ kind: 'license_fee', licenseId: acc.licenseId, participantCents: REUSE_ONLY_FEE, grossCents: 6028, platformCents: 603, dataIncluded: ['EHR history', 'Exome', 'Blood Pressure', 'Food log'], studyName: 'Loop campaign' });
+    expect(led.lifetimeEarningsCents).toBe(earnings + REUSE_ONLY_FEE);
+    expect(n('SELECT COUNT(*) AS n FROM license_line WHERE license_id = ?', acc.licenseId)).toBe(4);
+    expect(t.graph.get<{ status: string }>('SELECT status FROM opportunity WHERE id = ?', alexOpp.id)!.status).toBe('paid'); // reuse-only: paid at accept, no contributions
+    expect(((await pget('/opportunities?tab=past')).body as ParticipantOpportunities).items.find((o) => o.id === alexOpp.id)!.status).toBe('paid');
     await bpost(`/campaigns/${draft.id}/launch`).expect(409);
     expect(((await bget(`/campaigns/${draft.id}`).expect(200)).body as Campaign).status).toBe('active');
     const studies = (await bget('/studies')).body as StudyList;
@@ -262,7 +303,7 @@ describe('the loop (scale 0.05)', () => {
     expect(((await pget('/ledger')).body as ParticipantLedger).lifetimeEarningsCents).toBe(after.lifetimeEarningsCents);
     const counts = ((await pget('/opportunities')).body as ParticipantOpportunities).counts;
     expect(counts.in_progress).toBe(1);
-    expect(counts.past).toBe(7);
+    expect(counts.past).toBe(8); // 5 seeded + microbiome + the reuse-only Loop license + the withdrawn cardiovascular enrollment
   });
 
   it('DELETE categories/:domain soft-deletes, rebuilds coverage and excludes the category from new licenses', async () => {
@@ -295,12 +336,19 @@ describe('the loop (scale 0.05)', () => {
     const need = n(`SELECT COUNT(*) AS n FROM opportunity op JOIN campaign c ON c.id = op.campaign_id WHERE c.study_id = ? AND op.status IN ('declined','rejected','expired','withdrawn') AND (op.status <> 'declined' OR op.viewed_at IS NOT NULL)`, studyId);
     expect(need).toBeGreaterThan(0);
     const invited = n('SELECT COUNT(*) AS n FROM opportunity op JOIN campaign c ON c.id = op.campaign_id WHERE c.study_id = ?', studyId);
+    const rootBefore = ((await bget(`/studies/${studyId}`)).body as StudyDetail).counters;
+    const statusesBefore = t.graph.all<{ id: number; status: string }>(`SELECT id, status FROM opportunity WHERE campaign_id IN (SELECT id FROM campaign WHERE study_id = ?) AND status IN ('declined','rejected','expired','withdrawn') ORDER BY id`, studyId);
     const rc = (await bpost(`/studies/${studyId}/recontact`).expect(200)).body as RecontactResult;
     expect(rc.replaced).toBe(need);
     expect(rc.offered).toBe(need);
     expect(rc.counters.needReplacement).toBe(0);
     expect(n('SELECT COUNT(*) AS n FROM opportunity op JOIN campaign c ON c.id = op.campaign_id WHERE c.study_id = ?', studyId)).toBe(invited + need);
-    expect(n("SELECT COUNT(*) AS n FROM opportunity WHERE status = 'replaced' AND replaced_by_id IS NOT NULL")).toBe(need);
+    // the originals keep their terminal status (no 'replaced' rewrite) and point at their replacement; started / completed never move backwards
+    expect(n("SELECT COUNT(*) AS n FROM opportunity WHERE replaced_by_id IS NOT NULL")).toBe(need);
+    expect(n("SELECT COUNT(*) AS n FROM opportunity WHERE status = 'replaced'")).toBe(0);
+    expect(t.graph.all<{ id: number; status: string }>(`SELECT id, status FROM opportunity WHERE id IN (${statusesBefore.map(() => '?').join(',')}) ORDER BY id`, ...statusesBefore.map((r) => r.id))).toEqual(statusesBefore);
+    expect(rc.counters).toMatchObject({ started: rootBefore.started, completed: rootBefore.completed, accepted: rootBefore.accepted, qualityAccepted: rootBefore.qualityAccepted });
+    expect(rc.counters.invited).toBeGreaterThan(rootBefore.invited);
     await bpost(`/studies/${studyId}/recontact`).expect(409);
     expect(((await bget(`/studies/${studyId}`)).body as StudyDetail).replacementNote).toBe('No replacements needed');
   });

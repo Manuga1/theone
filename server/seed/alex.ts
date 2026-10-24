@@ -1,7 +1,7 @@
 // Alex: the one fully detailed participant. Ten years of history as raw + derived observations with artifacts,
 // 12 connected & verified sources, timeline events, and the marketplace state (see alex-marketplace.ts).
 import { createHash } from 'node:crypto';
-import { DEMO_TODAY, addDays, daysBetween, nowIso } from '@shared/clock';
+import { DEMO_NOW, DEMO_TODAY, addDays, daysBetween, hoursAgo, nowIso } from '@shared/clock';
 import { PROHIBITED_USE_KEYS } from '@shared/ontology';
 import { PROVENANCE_RANK, type ProvenanceClass } from '@shared/provenance';
 import { insert } from '../db/migrate';
@@ -55,6 +55,11 @@ export class AlexWriter {
   }
 }
 
+/** Timestamps never run past the fixed demo clock. */
+function clampToNow(iso: string): string {
+  return iso > DEMO_NOW ? DEMO_NOW : iso;
+}
+
 export type AlexSources = Record<'ehr' | 'quest' | 'watch' | 'genomics' | 'imaging' | 'meals' | 'omron' | 'surveys' | 'pharmacy' | 'labcorp' | 'kaiser' | 'scale' | 'manual' | 'dexcom' | 'dyno' | 'microbiome' | 'air', number>;
 
 export function seedAlex(ctx: SeedCtx): number {
@@ -85,7 +90,7 @@ export function seedAlex(ctx: SeedCtx): number {
     src('genomics', 'genomics', 'Color Genomics', 'Genomics', 'Upload or connect', 'connected', '2024-02-18', '2024-02-18T12:00:00Z', true, 4);
     src('imaging', 'imaging', 'DICOM import', 'Imaging', 'Import MRI / CT', 'connected', '2024-09-15', '2026-10-05T16:00:00Z', true, 5);
     src('meals', 'nutrition', 'MealSnap', 'Nutrition', 'Photograph meals', 'connected', '2025-04-01', '2026-10-23T20:10:00Z', true, 6);
-    src('omron', 'bp_device', 'Omron BP7450', 'Blood Pressure', 'Connect device', 'connected', '2025-08-24', '2026-10-24T07:05:00Z', true, 7);
+    src('omron', 'bp_device', 'Omron BP7450', 'Blood Pressure', 'Connect device', 'connected', '2025-08-24', hoursAgo(2), true, 7);
     src('surveys', 'survey', 'Health questionnaires', 'Surveys', 'Answer questionnaires', 'connected', '2023-04-10', '2026-10-10T18:00:00Z', true, 8);
     src('pharmacy', 'pharmacy', 'CVS Pharmacy', 'Pharmacy', 'Connect pharmacy', 'connected', '2023-05-02', '2026-10-01T09:00:00Z', true, 9);
     src('labcorp', 'lab', 'LabCorp', 'Labs (LabCorp)', 'Connect Lab', 'connected', '2024-10-20', '2024-10-20T15:00:00Z', true, 10);
@@ -201,8 +206,9 @@ export function seedAlex(ctx: SeedCtx): number {
       w.obs({ slug: 'physiology.cardiovascular.hrv', at: `${date}T06:00:00Z`, num: Math.round(hrv), unit: 'ms', source: S.watch, method: 'device', prov: 'connected_device' });
       w.obs({ slug: 'physiology.sleep.sleep_duration', at: `${date}T07:00:00Z`, num: Number(sleep.toFixed(1)), unit: 'h', source: S.watch, method: 'device', prov: 'connected_device' });
       w.obs({ slug: 'physiology.sleep.sleep_stages', at: `${date}T07:00:00Z`, num: Math.round(sleep * 60 * 0.18), json: { deep: Math.round(sleep * 60 * 0.18), rem: Math.round(sleep * 60 * 0.22), light: Math.round(sleep * 60 * 0.6) }, unit: 'min', source: S.watch, method: 'device', prov: 'connected_device' });
-      w.obs({ slug: 'physiology.mobility.steps', at: `${date}T23:00:00Z`, num: steps, unit: 'steps', source: S.watch, method: 'device', prov: 'connected_device' });
-      w.obs({ slug: 'physiology.mobility.active_minutes', at: `${date}T23:00:00Z`, num: active, unit: 'min', source: S.watch, method: 'device', prov: 'connected_device' });
+      const dayEnd = clampToNow(`${date}T23:00:00Z`);
+      w.obs({ slug: 'physiology.mobility.steps', at: dayEnd, num: steps, unit: 'steps', source: S.watch, method: 'device', prov: 'connected_device' });
+      w.obs({ slug: 'physiology.mobility.active_minutes', at: dayEnd, num: active, unit: 'min', source: S.watch, method: 'device', prov: 'connected_device' });
     }
   });
 
@@ -230,7 +236,8 @@ export function seedAlex(ctx: SeedCtx): number {
       const target = 138 - 10 * (d / (days - 1));
       level = 0.82 * level + 0.18 * target + rng.normal(0, 1.6);
       const art = w.artifact(S.omron, 'device_raw', `omron://bp7450/${date}.json`, 1_800 + rng.int(0, 400), date);
-      const times = fourth[d] ? ['07:05', '13:10', '17:30', '21:00'] : ['07:05', '13:10', '21:00'];
+      // the last (demo) day only holds readings taken before DEMO_NOW (row count unchanged: 1,482)
+      const times = date === DEMO_TODAY ? (fourth[d] ? ['07:05', '08:50', '10:30', '11:50'] : ['07:05', '09:40', '11:50']) : fourth[d] ? ['07:05', '13:10', '17:30', '21:00'] : ['07:05', '13:10', '21:00'];
       // the 14-day BP-variability protocol (Blood Pressure Variability study) ran 2025-11-25 → 2025-12-08
       const protocol = date >= '2025-11-25' && date <= '2025-12-08';
       for (const t of times) {
@@ -249,7 +256,7 @@ export function seedAlex(ctx: SeedCtx): number {
     for (const [m, slot] of monthFirst) {
       const mean = (a: number[]) => Math.round((a.reduce((x, y) => x + y, 0) / a.length) * 10) / 10;
       const last = m === DEMO_TODAY.slice(0, 7) ? DEMO_TODAY : addDays(`${m}-01`, 31).slice(0, 7) === m ? `${m}-31` : addDays(addDays(`${m}-01`, 31).slice(0, 7) + '-01', -1);
-      w.obs({ slug: 'physiology.cardiovascular.blood_pressure', at: `${last}T23:59:00Z`, num: mean(slot.sys), json: { systolic: mean(slot.sys), diastolic: mean(slot.dia), n: slot.sys.length }, unit: 'mmHg', source: S.omron, method: 'derived', prov: 'connected_device', derivedFrom: slot.id, derivation: 'monthly_trajectory' });
+      w.obs({ slug: 'physiology.cardiovascular.blood_pressure', at: clampToNow(`${last}T23:59:00Z`), num: mean(slot.sys), json: { systolic: mean(slot.sys), diastolic: mean(slot.dia), n: slot.sys.length }, unit: 'mmHg', source: S.omron, method: 'derived', prov: 'connected_device', derivedFrom: slot.id, derivation: 'monthly_trajectory' });
     }
   });
 
@@ -308,7 +315,8 @@ export function seedAlex(ctx: SeedCtx): number {
   db.tx(() => {
     insert(db, 'consent_setting', {
       participant_id: pid, prohibited_uses_json: JSON.stringify(PROHIBITED_USE_KEYS), excluded_categories_json: '[]', recontact_opt_in: 1, commercial_ok: 1,
-      preauthorize_reuse_only: 1, willing_device: 1, willing_protocol: 1, willing_survey: 1, willing_connect: 1, updated_at: now, created_at: now,
+      // reuse-only offers are shown to Alex (not pre-authorised), so an Expand launch reaches him as an offer he reviews
+      preauthorize_reuse_only: 0, willing_device: 1, willing_protocol: 1, willing_survey: 1, willing_connect: 1, updated_at: now, created_at: now,
     });
     insert(db, 'demand_watch', { participant_id: pid, concept_id: concept(ctx, 'biology.microbiome.gut_microbiome'), created_at: '2026-04-02T10:00:00Z' });
   });
@@ -318,7 +326,7 @@ export function seedAlex(ctx: SeedCtx): number {
 
   // ---------------- activity ("What changed this week") ----------------
   db.tx(() => {
-    w.activity('2026-10-24T07:05:00Z', 'bp_sync', '7 days of BP measurements added');
+    w.activity(hoursAgo(2), 'bp_sync', '7 days of BP measurements added');
     w.activity('2026-10-23T07:30:00Z', 'labs_import', 'New Quest labs imported');
     w.activity('2026-10-22T06:00:00Z', 'sleep_sync', 'Sleep data automatically updated');
     w.activity('2026-10-21T10:00:00Z', 'license_fee', '$42 earned from Research License #1842', 4200);

@@ -6,8 +6,14 @@ import type { Db } from '../db/driver';
 export type ConceptRow = {
   id: number; slug: string; parent_id: number | null; name: string; level: 'domain' | 'group' | 'leaf'; weight: number;
   unit: string | null; data_type: TreeNode['dataType'] | null; min_span_days: number; freshness_days: number | null; collection_method: string | null;
-  enrichable: number; comp_cents: number; device_cost_cents: number; in_ring: number; in_list: number; sort_order: number; description: string | null;
+  enrichable: number; comp_cents: number; device_cost_cents: number; reuse_comp_cents: number; in_ring: number; in_list: number; sort_order: number; description: string | null;
 };
+
+/** License (reuse) fee for a concept: the ontology's reuse_comp_cents, else ≈ 15 % of its collection comp with a 300¢ floor. */
+export function reuseFeeCents(c: Pick<ConceptRow, 'comp_cents' | 'reuse_comp_cents'>): number {
+  if (c.reuse_comp_cents > 0) return c.reuse_comp_cents;
+  return Math.max(300, Math.round(c.comp_cents * 0.15));
+}
 
 const cache = new WeakMap<Db, { version: number; rows: ConceptRow[]; bySlug: Map<string, ConceptRow>; byId: Map<number, ConceptRow>; children: Map<number | null, ConceptRow[]> }>();
 
@@ -53,7 +59,7 @@ export function buildTree(leafInfo: (c: ConceptRow) => LeafInfo, db: Db = graph(
   const node = (c: ConceptRow): TreeNode => {
     const base = {
       slug: c.slug, name: c.name, level: c.level, dataType: c.data_type ?? undefined, unit: c.unit, inRing: !!c.in_ring, inList: !!c.in_list,
-      compCents: c.comp_cents, deviceCostCents: c.device_cost_cents, enrichable: !!c.enrichable, minSpanDays: c.min_span_days, collectionMethod: c.collection_method, weight: c.weight,
+      compCents: c.comp_cents, deviceCostCents: c.device_cost_cents, reuseCompCents: c.level === 'leaf' ? reuseFeeCents(c) : 0, enrichable: !!c.enrichable, minSpanDays: c.min_span_days, collectionMethod: c.collection_method, weight: c.weight,
     };
     if (c.level === 'leaf') {
       const info = leafInfo(c);

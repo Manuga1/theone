@@ -15,12 +15,15 @@ export function EmptyState({ title = 'No participant data', body, icon, action }
 
 export function ErrorBox({ error }: { error: Error | string }) {
   if (error instanceof ApiRequestError) {
-    const what = error.status === 404 ? 'Not available' : error.status === 403 ? 'Refused' : error.status === 503 ? 'Not ready' : `HTTP ${error.status}`;
+    // The API's catch-all 404 says exactly 'not found' (no code); a missing record says '<thing> not found' with code not_found.
+    const unserved = error.status === 404 && error.message.trim().toLowerCase() === 'not found' && error.code !== 'not_found';
+    const what = error.status === 404 ? (unserved ? 'Not available' : 'Not found') : error.status === 403 ? 'Refused' : error.status === 503 ? 'Not ready' : `HTTP ${error.status}`;
     return (
       <div className="error-box">
         <strong>{what}</strong> — {error.message}
         {error.url && <span className="faint" style={{ wordBreak: 'break-all' }}> · /api{error.url}</span>}
-        {error.status === 404 && <div className="tiny mt-8">This endpoint is not served by the API yet; the page renders its empty state until it is.</div>}
+        {unserved && <div className="tiny mt-8">This endpoint is not served by the API yet; the page renders its empty state until it is.</div>}
+        {error.status === 404 && !unserved && <div className="tiny mt-8">No record with this id. It may have been removed by a demo reset — go back and pick one from the list.</div>}
       </div>
     );
   }

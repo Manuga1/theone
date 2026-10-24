@@ -14,7 +14,8 @@ export * from './StepBar';
 export * from './icons';
 export * from './RadialSignature';
 export * from './ConceptTree';
-export * from './BPChart';
+// BPChart is not re-exported: import { LazyBPChart } so recharts stays in its own chunk (import './BPChart' directly only inside lazy code).
+export * from './BPChartLazy';
 export * from './TimelineRail';
 export * from './SwimlaneStrip';
 export * from './LineageChain';

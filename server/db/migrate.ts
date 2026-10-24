@@ -8,6 +8,12 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 
 export function migrateGraph(db: Db): void {
   db.exec(readFileSync(path.join(here, 'schema.sql'), 'utf8'));
+  // additive columns for databases created before they existed (CREATE IF NOT EXISTS does not alter)
+  addColumn(db, 'concept', 'reuse_comp_cents', 'INTEGER NOT NULL DEFAULT 0');
+}
+function addColumn(db: Db, table: string, column: string, decl: string): void {
+  const cols = db.all<{ name: string }>(`PRAGMA table_info(${table})`).map((c) => c.name);
+  if (!cols.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
 }
 export function migrateVault(db: Db): void {
   db.exec(readFileSync(path.join(here, 'vault-schema.sql'), 'utf8'));

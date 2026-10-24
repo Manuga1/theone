@@ -15,7 +15,7 @@ Requires Node 22.13+ (uses the built-in `node:sqlite`; no native modules).
 
 ```bash
 npm install
-npm run dev        # seeds data/ on first run (~10 s), then API on :4000 and app on :5173
+npm run dev        # seeds data/ on first run (~15 s), then API on :4000 and app on :5173
 ```
 
 Open <http://localhost:5173>. The header has a **persona switch** (participant ⇄ buyer), a buyer **organisation selector**, and **Reset demo**.
@@ -23,7 +23,7 @@ Open <http://localhost:5173>. The header has a **persona switch** (participant �
 | Script | What it does |
 |---|---|
 | `npm run dev` | Seed if `data/` is empty, then start API (tsx watch) and Vite together |
-| `npm run seed` | Regenerate the full synthetic dataset (deterministic; ~10 s) |
+| `npm run seed` | Regenerate the full synthetic dataset (deterministic; ~15 s on a 4-core machine) |
 | `npm run seed:small` | Same at 5 % scale (for quick runs) |
 | `npm run data:wipe` | Delete every generated database file |
 | `npm test` | Unit + API tests (in-memory DB, 5 % scale) |
@@ -36,7 +36,8 @@ Open <http://localhost:5173>. The header has a **persona switch** (participant �
 
 All fake data lives in **`data/graph.sqlite` and `data/vault.sqlite`**, which are generated and gitignored. Nothing synthetic is committed, and the only code that produces it is `server/seed/`.
 
-- `npm run data:wipe` deletes it. `npm run seed` regenerates it. The in-app **Reset demo** button does both.
+- `npm run data:wipe` deletes it. `npm run seed` regenerates it. The in-app **Reset demo** button does both (≈ 15 s) and returns to the persona's home page.
+- `DATA_DIR=/somewhere npm run dev` (or `GRAPH_DB=` / `VAULT_DB=`) keeps the databases elsewhere; the seed check, the seed CLI and the server all resolve the same path.
 - `SEED_DISABLED=1 npm run dev` (or `node scripts/ensure-seed.mjs --no-seed`) creates the schema only. The app runs against an empty database: participant pages show an empty state and buyer counts read zero. A test boots the API this way and asserts every route still answers.
 - To remove generation entirely, delete `server/seed/` and the `ensure-seed` step from the `dev`/`start` scripts. Real data would enter through the same observation envelope (`observation` table) via connectors you write.
 
@@ -81,7 +82,7 @@ tests/      vitest unit + API tests; e2e/ Playwright
 1. **Buyer** defines a cohort (B2); every filter re-runs a single-pass evaluation over a temp table of the base population (funnel, missing-data matrix, coverage heatmap, bars; < 300 ms at full scale, cached by criteria hash + write version).
 2. The **missing-data matrix** (B4) enumerates groups of participants lacking exactly one subset of the enrichable variables and estimates how many are recruitable (recontact opt-in, no category exclusion, no red-line conflict, no open offer).
 3. **Expand cohort** (B6) turns a target N into contacts / expected acceptances / completions and four cost lines, using the constants in `shared/pricing.ts`.
-4. **Launch** inserts an `offered` opportunity per contacted participant. Ready-now members get a reuse-only offer (license fee for existing data); others get collection tasks.
+4. **Launch** inserts an `offered` opportunity per contacted participant. Ready-now members get a reuse-only offer (license fee for existing data); others get collection tasks. Each variable carries a mode: **Reuse existing** (license the data everyone already holds), **Collect if missing** (collect only from participants who lack it; license it — and pay the reuse fee — for the rest), **Collect for all** (re-measure everyone under the protocol; nothing held counts). A member's offer therefore prices the variables they must collect at the collection comp and everything reused at the reuse fee; a ready-now member under the default modes (EHR reuse + exome / BP / food log collect-if-missing) gets a reuse-only offer whose fee covers all four.
 5. **Participant** reviews the consent panel (what they receive, what they do not, term, no future reuse, recontact only through the platform), accepts; the reuse license, its per-concept lines and the ledger row are written; contributions are created.
 6. **Sync data** simulates the protocol (BP cuff 14 days, meal photos, CGM, grip dynamometer, microbiome kit, surveys), writes raw and derived observations with artifacts, verifies, pays, rebuilds coverage. The node flips to verified; the study counters and the dataset version move.
 7. **Request additional variable** (B8) previews eligibility and cost for any concept, including a new one, creates a child campaign, offers it, and notifies participants who asked to be told ("Notify me"). Then steps 5–6 repeat.
@@ -90,13 +91,14 @@ tests/      vitest unit + API tests; e2e/ Playwright
 
 ## Demo walkthrough
 
-See *DEMO.md* for the click-by-click script that the end-to-end test also runs.
+See [DEMO.md](DEMO.md) for the click-by-click script that the end-to-end test (`e2e/loop.spec.ts`) also runs: default cohort → funnel → gaps → expand with the **default modes** → proposal → launch → the participant's **reuse-only offer** (paid at accept) → the buyer requests gut microbiome → the participant accepts, syncs, revokes → the buyer's study and dataset move → Reset demo. It also says what changes if you set a mode to *Collect for all* instead (no reuse-only offer can exist; the participant gets a collection task instead).
 
 ## Deviations from the mockups (deliberate, documented)
 
 - **Missing-data matrix side cells.** The deck's 829 / 1,403 / 917 cannot coexist with its own sequential funnel; the computed values are 1,529 / 697 / 571 (exome-only 622 matches).
 - **Coverage bars** count any data for a variable, including data the running campaign has already collected, so BP and Diet read higher than the deck's pre-enrichment snapshot. The bars move as a campaign progresses, which is the point.
 - **Estimated after enrichment** is derived (≈ 2,417–2,648) rather than typed (2,300–2,600).
+- **B6 cost lines** come out of `shared/pricing.ts` and the per-variable comps as ≈ $346k / $94k / $42k / $89k (total ≈ $571k) against the deck's $318k / $94k / $42k / $86k: the contact / acceptance / completion triple (4,850 / 2,920 / 2,560) and "6–8 weeks" match exactly, the compensation line is ≈ 9 % higher because the per-task comps are the ones the participant cards show. The estimate prices collection comps plus the reuse fees of *Reuse existing* variables; the reuse fees paid for *Collect if missing* variables a member already holds are charged at accept but not forecast (≈ +$46k at full scale).
 - **"Up to $1,180"** on the home tile is computed from the actual cards ($1,855); the deck's number does not add up.
 - Alex gains a 2024 type 2 diabetes diagnosis (HbA1c 7.2) so he matches the default cohort and the metabolic study.
 - The swimlane shows the trailing six months (the deck labels Jan–Jun 2025, before Alex's BP cuff existed).

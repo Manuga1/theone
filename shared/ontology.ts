@@ -26,6 +26,8 @@ export type LeafDef = {
   /** Default participant compensation (net cents) and device/test cost per collection, used by campaign defaults. */
   compCents: number;
   deviceCostCents: number;
+  /** License (reuse) fee in net cents when a campaign REUSES existing data for this leaf; defaults to ≈ 15 % of compCents, min 300¢. */
+  reuseCompCents?: number;
   inList?: boolean;
   description?: string;
 };
@@ -74,7 +76,7 @@ export const ONTOLOGY: DomainDef[] = [
     slug: 'biology', name: 'Biology (Genomics)', ringName: 'Genomics', weight: 0.12,
     groups: [
       { slug: 'biology.genomics', name: 'Genomics', weight: 0.78, leaves: [
-        file('biology.genomics.exome', 'Exome', 0.9, { method: 'kit', enrichable: true, compCents: 5000, deviceCostCents: 3600, description: 'Whole-exome sequencing (VCF)' }),
+        file('biology.genomics.exome', 'Exome', 0.9, { method: 'kit', enrichable: true, compCents: 5000, deviceCostCents: 3600, reuseCompCents: 2000, description: 'Whole-exome sequencing (VCF)' }),
         st('biology.genomics.pharmacogenomics', 'Pharmacogenomics', 0.1, { method: 'derived' }),
       ] },
       { slug: 'biology.microbiome', name: 'Microbiome', weight: 0.22, leaves: [
@@ -86,11 +88,11 @@ export const ONTOLOGY: DomainDef[] = [
     slug: 'clinical', name: 'Clinical', ringName: 'Clinical', weight: 0.18,
     groups: [
       { slug: 'clinical.encounters', name: 'Encounters', weight: 0.25, leaves: [
-        st('clinical.encounters.ehr_history', 'EHR history', 1, { minSpanDays: 365, freshnessDays: 365, description: 'Encounter history from connected medical records' }),
+        st('clinical.encounters.ehr_history', 'EHR history', 1, { minSpanDays: 365, freshnessDays: 365, reuseCompCents: 1200, description: 'Encounter history from connected medical records' }),
       ] },
       { slug: 'clinical.labs', name: 'Labs', weight: 0.3, leaves: [
-        lab('clinical.labs.hba1c', 'HbA1c', 0.4, '%'),
-        lab('clinical.labs.lipid_panel', 'Lipid panel', 0.3, 'mg/dL'),
+        lab('clinical.labs.hba1c', 'HbA1c', 0.4, '%', { reuseCompCents: 500 }),
+        lab('clinical.labs.lipid_panel', 'Lipid panel', 0.3, 'mg/dL', { reuseCompCents: 500 }),
         lab('clinical.labs.metabolic_panel', 'Metabolic panel', 0.2, 'mg/dL'),
         lab('clinical.labs.cbc', 'Complete blood count', 0.1, 'K/uL'),
       ] },
@@ -106,7 +108,7 @@ export const ONTOLOGY: DomainDef[] = [
         dx('clinical.diagnoses.coronary_artery_disease', 'Coronary artery disease'),
       ] },
       { slug: 'clinical.medications', name: 'Medications', weight: 0.15, leaves: [
-        st('clinical.medications.medication_list', 'Medication list', 1),
+        st('clinical.medications.medication_list', 'Medication list', 1, { reuseCompCents: 400 }),
         survey('clinical.medications.adherence', 'Medication adherence', 0, { inList: false, enrichable: true, compCents: 4000 }),
       ] },
       { slug: 'clinical.vitals', name: 'Vitals & preventive', weight: 0.1, leaves: [
@@ -121,7 +123,7 @@ export const ONTOLOGY: DomainDef[] = [
       { slug: 'physiology.cardiovascular', name: 'Cardiovascular', weight: 0.34, leaves: [
         ts('physiology.cardiovascular.heart_rate', 'Heart Rate', 0.27, 'bpm'),
         ts('physiology.cardiovascular.hrv', 'HRV', 0.27, 'ms'),
-        ts('physiology.cardiovascular.blood_pressure', 'Blood Pressure', 0.37, 'mmHg', { enrichable: true, compCents: 11000, deviceCostCents: 2600, description: 'Home blood pressure (systolic/diastolic)' }),
+        ts('physiology.cardiovascular.blood_pressure', 'Blood Pressure', 0.37, 'mmHg', { enrichable: true, compCents: 11000, deviceCostCents: 2600, reuseCompCents: 1400, description: 'Home blood pressure (systolic/diastolic)' }),
         ts('physiology.cardiovascular.ecg', 'ECG', 0.09, 'mV'),
       ] },
       { slug: 'physiology.metabolic', name: 'Metabolic', weight: 0.15, leaves: [
@@ -213,7 +215,7 @@ export const ONTOLOGY: DomainDef[] = [
     slug: 'imaging', name: 'Imaging', ringName: 'Imaging', weight: 0.06,
     groups: [
       { slug: 'imaging.mri', name: 'MRI', weight: 0.5, leaves: [
-        file('imaging.mri.mri_musculoskeletal', 'MRI (musculoskeletal)', 0.6, { dataType: 'dicom' }),
+        file('imaging.mri.mri_musculoskeletal', 'MRI (musculoskeletal)', 0.6, { dataType: 'dicom', reuseCompCents: 800 }),
         file('imaging.mri.mri_brain', 'MRI (brain)', 0.4, { dataType: 'dicom' }),
       ] },
       { slug: 'imaging.xray_ct', name: 'X-ray / CT', weight: 0.2, leaves: [
@@ -230,19 +232,27 @@ export const ONTOLOGY: DomainDef[] = [
 export type FlatConcept = {
   slug: string; parentSlug: string | null; name: string; level: 'domain' | 'group' | 'leaf'; weight: number;
   unit: string | null; dataType: DataType | null; minSpanDays: number; freshnessDays: number | null; method: CollectionMethod | null;
-  enrichable: boolean; compCents: number; deviceCostCents: number; inRing: boolean; inList: boolean; sortOrder: number; description: string | null;
+  enrichable: boolean; compCents: number; deviceCostCents: number; reuseCompCents: number; inRing: boolean; inList: boolean; sortOrder: number; description: string | null;
 };
+
+/** Reuse (license) fee for a leaf: the explicit `reuseCompCents`, else ≈ 15 % of the collection comp with a 300¢ floor. */
+export function reuseFeeFor(l: Pick<LeafDef, 'compCents' | 'reuseCompCents'>): number {
+  if (typeof l.reuseCompCents === 'number' && Number.isFinite(l.reuseCompCents)) return Math.max(0, Math.round(l.reuseCompCents));
+  return Math.max(300, Math.round(l.compCents * 0.15));
+}
+/** Domains drawn in the P1 ring: every domain except Demographics (it stays in the P2 list). */
+export const RING_EXCLUDED_DOMAINS = new Set(['demographics']);
 
 /** Pre-order flattening (parents before children) for seeding. */
 export function flattenOntology(): FlatConcept[] {
   const out: FlatConcept[] = [];
   let order = 0;
   for (const d of ONTOLOGY) {
-    out.push({ slug: d.slug, parentSlug: null, name: d.name, level: 'domain', weight: d.weight, unit: null, dataType: null, minSpanDays: 0, freshnessDays: null, method: null, enrichable: false, compCents: 0, deviceCostCents: 0, inRing: true, inList: true, sortOrder: order++, description: null });
+    out.push({ slug: d.slug, parentSlug: null, name: d.name, level: 'domain', weight: d.weight, unit: null, dataType: null, minSpanDays: 0, freshnessDays: null, method: null, enrichable: false, compCents: 0, deviceCostCents: 0, reuseCompCents: 0, inRing: !RING_EXCLUDED_DOMAINS.has(d.slug), inList: true, sortOrder: order++, description: null });
     for (const g of d.groups) {
-      out.push({ slug: g.slug, parentSlug: d.slug, name: g.name, level: 'group', weight: g.weight, unit: null, dataType: null, minSpanDays: 0, freshnessDays: null, method: null, enrichable: false, compCents: 0, deviceCostCents: 0, inRing: false, inList: true, sortOrder: order++, description: null });
+      out.push({ slug: g.slug, parentSlug: d.slug, name: g.name, level: 'group', weight: g.weight, unit: null, dataType: null, minSpanDays: 0, freshnessDays: null, method: null, enrichable: false, compCents: 0, deviceCostCents: 0, reuseCompCents: 0, inRing: false, inList: true, sortOrder: order++, description: null });
       for (const l of g.leaves) {
-        out.push({ slug: l.slug, parentSlug: g.slug, name: l.name, level: 'leaf', weight: l.weight, unit: l.unit ?? null, dataType: l.dataType, minSpanDays: l.minSpanDays, freshnessDays: l.freshnessDays, method: l.method, enrichable: l.enrichable, compCents: l.compCents, deviceCostCents: l.deviceCostCents, inRing: false, inList: l.inList ?? l.weight > 0, sortOrder: order++, description: l.description ?? null });
+        out.push({ slug: l.slug, parentSlug: g.slug, name: l.name, level: 'leaf', weight: l.weight, unit: l.unit ?? null, dataType: l.dataType, minSpanDays: l.minSpanDays, freshnessDays: l.freshnessDays, method: l.method, enrichable: l.enrichable, compCents: l.compCents, deviceCostCents: l.deviceCostCents, reuseCompCents: reuseFeeFor(l), inRing: false, inList: l.inList ?? l.weight > 0, sortOrder: order++, description: l.description ?? null });
       }
     }
   }
@@ -287,9 +297,9 @@ export const HEATMAP_COLUMNS: { slug: string; label: string }[] = [
   { slug: 'imaging.mri.mri_musculoskeletal', label: 'Imaging' },
 ];
 
-/** Default B6 expansion campaign over the B2 cohort: reuse EHR, collect exome / BP / nutrition where missing. */
+/** Default B6 expansion campaign over the B2 cohort: reuse EHR (license fee = its reuse fee), collect exome / BP / nutrition where missing. */
 export const DEFAULT_CAMPAIGN_VARIABLES: CampaignVariable[] = [
-  { conceptSlug: 'clinical.encounters.ehr_history', mode: 'reuse', requirement: { historical: { minSpanDays: 365 * 3, minProvRank: 4 } }, compCents: 0, deviceCostCents: 0 },
+  { conceptSlug: 'clinical.encounters.ehr_history', mode: 'reuse', requirement: { historical: { minSpanDays: 365 * 3, minProvRank: 4 } }, compCents: reuseFeeFor(leafDef('clinical.encounters.ehr_history')!), deviceCostCents: 0 },
   { conceptSlug: 'biology.genomics.exome', mode: 'collect_if_missing', requirement: { historical: { minSpanDays: 0, minProvRank: 3 }, protocol: { method: 'kit', durationDays: 1, minProvRank: 3 } }, compCents: 5000, deviceCostCents: 3600 },
   { conceptSlug: 'physiology.cardiovascular.blood_pressure', mode: 'collect_if_missing', requirement: { historical: { minSpanDays: 365, minProvRank: 3 }, protocol: { method: 'device', durationDays: 14, device: 'Omron BP7450', minProvRank: 3 } }, compCents: 11000, deviceCostCents: 2600 },
   { conceptSlug: 'behavior.nutrition.food_log', mode: 'collect_if_missing', requirement: { historical: { minSpanDays: 30, minProvRank: 2 }, protocol: { method: 'photo', durationDays: 7, minProvRank: 2 } }, compCents: 5500, deviceCostCents: 0 },

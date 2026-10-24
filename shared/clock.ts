@@ -1,6 +1,6 @@
 // Fixed demo clock. Every date, relative label, license-term check and screenshot derives from these.
 export const DEMO_TODAY = '2026-10-24';
-export const DEMO_NOW = '2026-10-24T09:00:00Z';
+export const DEMO_NOW = '2026-10-24T14:00:00Z';
 
 export function today(): string {
   return DEMO_TODAY;

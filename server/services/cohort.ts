@@ -39,10 +39,16 @@ export type Evaluation = {
   poolSql: { where: string; collectExpr: string; specs: Spec[] } | null;
 };
 
+/** Ready-now member (satisfies every variable historically) eligible for a reuse-only license offer. */
+export type ReadyMember = { pid: number; preauthorized: boolean };
+
 export type PoolMember = { pid: number; slugs: string[] };
 
 export type Spec = { slug: string; id: number; minSpanDays: number; minProvRank: number; enrichable: boolean; alwaysCollect: boolean; mustHave: boolean; name: string };
-type ConceptRow = { id: number; slug: string; name: string; enrichable: number };
+type ConceptRow = { id: number; slug: string; name: string; enrichable: number; sort_order: number };
+
+/** What the B5 any-data bars measure (additive `CohortPreview.barsNote`). */
+export const BARS_NOTE = 'Share of the cohort base with any data for the variable, including data collected by running campaigns — the bars move as collection campaigns complete.';
 
 const DEMO_YEAR = Number(DEMO_TODAY.slice(0, 4));
 const OPEN_STATUSES = "('offered','viewed','reviewed','accepted','in_progress','submitted')";
@@ -83,7 +89,7 @@ export function evaluateCohort(rawCriteria: CohortCriteria, opts: CohortOptions,
 function compute(c: CohortCriteria, opts: CohortOptions, db: Db): Evaluation {
   const consent = orgConsent(opts.orgId, db);
   const ready = db.tableExists('participant') && db.tableExists('concept');
-  const conceptRows = ready ? db.all<ConceptRow>('SELECT id, slug, name, enrichable FROM concept') : [];
+  const conceptRows = ready ? db.all<ConceptRow>('SELECT id, slug, name, enrichable, sort_order FROM concept') : [];
   const concepts = new Map(conceptRows.map((r) => [r.slug, r]));
   const total = ready ? (db.get<{ n: number }>('SELECT COUNT(*) AS n FROM participant')?.n ?? 0) : 0;
 
@@ -222,9 +228,11 @@ function compute(c: CohortCriteria, opts: CohortOptions, db: Db): Evaluation {
            FROM (SELECT ${collectExpr} AS gkey, recontact, excl, commercial, open_opp FROM pv WHERE ${groupWhere}) g
           WHERE gkey <> '' GROUP BY gkey`)
     : [];
+  // group labels follow the canonical ontology order (concept.sort_order), whatever order the criteria listed the modalities in
+  const sortOrder = (slug: string) => concepts.get(slug)?.sort_order ?? Number.MAX_SAFE_INTEGER;
   const groups: GroupInput[] = groupRows.map((r) => {
     const idx = r.gkey.split(',').filter(Boolean).map(Number);
-    const slugs = idx.map((i) => groupSpecs[i].slug);
+    const slugs = idx.map((i) => groupSpecs[i].slug).sort((a, b) => sortOrder(a) - sortOrder(b));
     return { key: groupKey(slugs), label: groupLabel(slugs), slugs, eligible: r.eligible, recruitable: r.recruitable };
   });
   groups.sort((a, b) => a.slugs.length - b.slugs.length || b.eligible - a.eligible);
@@ -265,13 +273,17 @@ function compute(c: CohortCriteria, opts: CohortOptions, db: Db): Evaluation {
  * recruitable predicate, with the slugs to collect. Runs an uncached evaluation and reads `pv` in the same
  * synchronous block (the temp table is connection-global). Members with nothing to collect are excluded.
  */
-export function recruitablePool(criteria: CohortCriteria, opts: CohortOptions, db: Db = graph()): { ev: Evaluation; members: PoolMember[] } {
+export function recruitablePool(criteria: CohortCriteria, opts: CohortOptions, db: Db = graph()): { ev: Evaluation; members: PoolMember[]; ready: ReadyMember[] } {
   const ev = evaluateCohort(criteria, { ...opts, skipCache: true }, db);
-  if (!ev.poolSql) return { ev, members: [] };
+  if (!ev.poolSql) return { ev, members: [], ready: [] };
   const { where, collectExpr, specs } = ev.poolSql;
   const rows = db.all<{ pid: number; gkey: string }>(`SELECT pid, (${collectExpr}) AS gkey FROM pv WHERE ${where} AND (${collectExpr}) <> '' ORDER BY pid`);
   const members = rows.map((r) => ({ pid: r.pid, slugs: r.gkey.split(',').filter(Boolean).map((i) => specs[Number(i)].slug) }));
-  return { ev, members };
+  // ready-now: nothing to collect (every variable satisfied historically) but still recruitable → reuse-only license offer
+  const ready = db.all<{ pid: number; pre: number }>(
+    `SELECT pv.pid, COALESCE(cs.preauthorize_reuse_only, 0) AS pre FROM pv LEFT JOIN consent_setting cs ON cs.participant_id = pv.pid WHERE ${where} AND (${collectExpr}) = '' ORDER BY pv.pid`)
+    .map((r) => ({ pid: r.pid, preauthorized: r.pre === 1 }));
+  return { ev, members, ready };
 }
 
 function cell(share: number): HeatCell {
@@ -319,6 +331,7 @@ export function previewFor(criteria: CohortCriteria, orgId: number, db: Db = gra
     matrix: { groups, notRecruitable: ev.notRecruitable.map((r) => ({ ...r, n: kfloorN(r.n) })), estimatedAfter: { low: kfloorN(after.low), high: kfloorN(after.high), point: kfloorN(after.point) } },
     heatmap: { columns: ev.heatmap.columns, rows: ev.heatmap.rows.map((r) => ({ ...r, n: kfloorN(r.n) })) },
     bars: ev.bars,
+    barsNote: BARS_NOTE,
     consent: ev.consent,
     timingMs: ev.timingMs,
   };

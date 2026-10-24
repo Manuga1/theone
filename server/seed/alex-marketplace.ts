@@ -1,7 +1,7 @@
 // Alex's marketplace state: buyer orgs, studies/campaigns, the four available opportunities, one in-progress and five
 // past enrollments, seven licenses #1836–#1842 and five contribution payments (net total exactly $2,842.17).
 // The bulk BioPharma campaign membership (4,850 invited …) is seeded by marketplace.ts (loop stage).
-import { addMonths, nowIso } from '@shared/clock';
+import { addMonths, hoursAgo, nowIso } from '@shared/clock';
 import { DEFAULT_CRITERIA, type CohortCriteria } from '@shared/criteria';
 import type { CampaignVariable } from '@shared/requirement';
 import { insert } from '../db/migrate';
@@ -60,13 +60,14 @@ const STUDIES: StudySpec[] = [
     key: 'metabolic', org: 'biopharma', name: 'Metabolic Monitoring Study', purpose: 'Study metabolic treatment response', useTags: ['drug_development', 'clinical_research'],
     termMonths: 12, targetN: 2500, criteria: DEFAULT_CRITERIA, cohortName: 'Type 2 diabetes + hypertension', studyStatus: 'active', campaignStatus: 'active', launchedAt: '2026-02-10',
     variables: [
-      v('clinical.encounters.ehr_history', 'reuse', 'EHR history', 0, hist(365 * 3, 4)),
+      // reuse variables carry a real license fee (Σ = 4,000¢ → the reuse license minted at accept); card total stays $240
+      v('clinical.encounters.ehr_history', 'reuse', 'EHR history', 1500, hist(365 * 3, 4)),
       // exome / medications are reused when present (no historical requirement → not a recruitment pre-filter)
-      v('biology.genomics.exome', 'reuse', 'Exome', 0, {}),
-      v('clinical.medications.medication_list', 'reuse', 'Medications', 0, {}),
+      v('biology.genomics.exome', 'reuse', 'Exome', 2000, {}),
+      v('clinical.medications.medication_list', 'reuse', 'Medications', 500, {}),
       v('physiology.cardiovascular.blood_pressure', 'collect_all', '14 days continuous BP', 12000, { ...hist(365, 3), ...proto('device', 14, 3, { device: 'Omron BP7450' }) }, 2600),
-      v('behavior.nutrition.food_log', 'collect_all', '7-day food diary', 8000, { ...hist(30, 2), ...proto('photo', 7, 2) }),
-      v('outcomes.patient_reported.symptom_survey', 'collect_all', 'Short weekly survey', 4000, proto('survey', 7, 3)),
+      v('behavior.nutrition.food_log', 'collect_all', '7-day food diary', 5000, { ...hist(30, 2), ...proto('photo', 7, 2) }),
+      v('outcomes.patient_reported.symptom_survey', 'collect_all', 'Short weekly survey', 3000, proto('survey', 7, 3)),
     ],
   },
   {
@@ -269,7 +270,7 @@ export function seedAlexMarketplace(ctx: SeedCtx, w: AlexWriter, S: AlexSources)
   // ---- buyer-side activity ----
   db.tx(() => {
     const act = (org: string, at: string, kind: string, text: string) => insert(db, 'activity', { participant_id: null, buyer_org_id: ctx.orgs[org], kind, text, amount_cents: null, occurred_at: at, created_at: now });
-    act('biopharma', '2026-10-24T07:00:00Z', 'cohort_updated', 'Type 2 diabetes cohort updated');
+    act('biopharma', hoursAgo(2), 'cohort_updated', 'Type 2 diabetes cohort updated');
     act('biopharma', '2026-10-23T08:00:00Z', 'campaign', 'Nutrition collection campaign — 7 new completions');
     act('biopharma', '2026-10-22T09:00:00Z', 'dataset', 'New dataset version available');
     act('pharma', '2026-10-21T10:00:00Z', 'license', 'Longitudinal Lipid Study: 1 new reuse license');

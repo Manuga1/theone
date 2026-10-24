@@ -12,10 +12,45 @@ import { forbidden, notFound, conflict } from '../errors';
 import { logActivity } from './activity';
 import { orgConsent } from './cohort';
 import { conceptNames, fromNet, postLedger } from './ledger';
-import { conceptBySlug } from './ontology';
+import { conceptBySlug, reuseFeeCents } from './ontology';
 import { assertTransition, OPPORTUNITY_TRANSITIONS } from './state';
 
 export type SeedVariable = CampaignVariable & { label?: string };
+
+/** One licensed (reused) variable of an opportunity with its license fee (net cents). */
+export type ReuseScopeItem = { variable: SeedVariable; conceptSlug: string; cents: number };
+
+/**
+ * The reuse scope of ONE opportunity = the campaign's `reuse` variables ∪ its `collect_if_missing` variables that this
+ * participant already holds (i.e. not listed in the opportunity's missing concepts). A held collect_if_missing variable
+ * is licensed at the concept's reuse fee (B6: "collect only from participants who lack it; reuse — and pay the fee —
+ * for the rest"). `collect_all` variables are always re-measured and never licensed.
+ */
+export function reuseScope(vars: SeedVariable[], missing: Iterable<string> | string, db: Db = graph()): ReuseScopeItem[] {
+  const miss = new Set(typeof missing === 'string' ? (JSON.parse(missing) as string[]) : missing);
+  const out: ReuseScopeItem[] = [];
+  for (const v of vars) {
+    if (v.mode === 'reuse') out.push({ variable: v, conceptSlug: v.conceptSlug, cents: v.compCents });
+    else if (v.mode === 'collect_if_missing' && !miss.has(v.conceptSlug)) {
+      const c = conceptBySlug(v.conceptSlug, db);
+      out.push({ variable: v, conceptSlug: v.conceptSlug, cents: c ? reuseFeeCents(c) : Math.max(300, Math.round(v.compCents * 0.15)) });
+    }
+  }
+  return out;
+}
+/** Σ license fees of an opportunity's reuse scope. */
+export function reuseFeeFor(vars: SeedVariable[], missing: Iterable<string> | string, db: Db = graph()): number {
+  return reuseScope(vars, missing, db).reduce((a, s) => a + s.cents, 0);
+}
+/** What this participant collects under the opportunity: collect_all variables + the collect_if_missing ones they lack. */
+export function collectVariables(vars: SeedVariable[], missing: Iterable<string> | string): SeedVariable[] {
+  const miss = new Set(typeof missing === 'string' ? (JSON.parse(missing) as string[]) : missing);
+  return vars.filter((v) => v.mode === 'collect_all' || (v.mode === 'collect_if_missing' && miss.has(v.conceptSlug)));
+}
+/** comp_max of an offer = Σ collection comps of what the member collects + Σ license fees of what is reused. */
+export function offerComp(vars: SeedVariable[], missing: string[], db: Db = graph()): number {
+  return collectVariables(vars, missing).reduce((a, v) => a + v.compCents, 0) + reuseFeeFor(vars, missing, db);
+}
 
 export type OppJoined = {
   id: number; participant_id: number; status: OpportunityStatus; missing_concepts_json: string; comp_max_cents: number; viewed_at: string | null; reviewed_at: string | null;
@@ -101,10 +136,9 @@ export function nextLicenseNumber(db: Db): number {
  */
 export function enroll(db: Db, o: OppJoined, opts: { at: string; termStart?: string; licenseNumber?: number }): EnrollResult {
   const vars = JSON.parse(o.variables_json) as SeedVariable[];
-  const missing = new Set(JSON.parse(o.missing_concepts_json) as string[]);
   const scope = Array.from(new Set(vars.map((v) => v.conceptSlug)));
-  const reuse = vars.filter((v) => v.mode === 'reuse');
-  const collect = vars.filter((v) => v.mode === 'collect_all' || (v.mode === 'collect_if_missing' && missing.has(v.conceptSlug)));
+  const reuse = reuseScope(vars, o.missing_concepts_json, db); // reuse vars + held collect_if_missing vars (licensed at the reuse fee)
+  const collect = collectVariables(vars, o.missing_concepts_json);
   const termStart = opts.termStart ?? opts.at.slice(0, 10);
   const termEnd = addMonths(termStart, o.license_term_months);
   const grantId = db.run(
@@ -113,16 +147,16 @@ export function enroll(db: Db, o: OppJoined, opts: { at: string; termStart?: str
   const enrollmentId = db.run(
     "INSERT INTO enrollment (participant_id, study_id, campaign_id, opportunity_id, consent_grant_id, status, enrolled_at, completed_at, withdrawn_at, created_at) VALUES (?,?,?,?,?,'active',?,NULL,NULL,?)",
     o.participant_id, o.study_id, o.campaign_id, o.id, grantId, opts.at, opts.at).lastId;
-  const licenseNet = reuse.reduce((a, v) => a + v.compCents, 0);
+  const licenseNet = reuse.reduce((a, s) => a + s.cents, 0);
   const number = opts.licenseNumber ?? nextLicenseNumber(db);
   const split = fromNet(licenseNet);
   const licenseId = db.run(
     'INSERT INTO license (number, study_id, buyer_org_id, participant_id, consent_grant_id, enrollment_id, scope_concepts_json, purpose, term_start, term_end, gross_cents, participant_cents, platform_cents, revoked_at, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,?)',
-    number, o.study_id, o.buyer_org_id, o.participant_id, grantId, enrollmentId, JSON.stringify(reuse.map((v) => v.conceptSlug)), o.purpose, termStart, termEnd,
+    number, o.study_id, o.buyer_org_id, o.participant_id, grantId, enrollmentId, JSON.stringify(reuse.map((s) => s.conceptSlug)), o.purpose, termStart, termEnd,
     split.gross, split.participant, split.platform, opts.at).lastId;
-  for (const v of reuse) {
-    const c = conceptBySlug(v.conceptSlug, db);
-    if (c) db.run('INSERT INTO license_line (license_id, concept_id, cents, created_at) VALUES (?,?,?,?)', licenseId, c.id, v.compCents, opts.at);
+  for (const s of reuse) {
+    const c = conceptBySlug(s.conceptSlug, db);
+    if (c) db.run('INSERT INTO license_line (license_id, concept_id, cents, created_at) VALUES (?,?,?,?)', licenseId, c.id, s.cents, opts.at);
   }
   postLedger(db, { participantId: o.participant_id, kind: 'license_fee', netCents: licenseNet, occurredAt: opts.at, studyId: o.study_id, licenseId, memo: `Research License #${number} — ${o.study_name}` });
   const contributionIds: number[] = [];

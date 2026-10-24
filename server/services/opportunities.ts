@@ -4,6 +4,7 @@ import type { CampaignVariable } from '@shared/requirement';
 import type { ContributionItem, OpportunityCard, OpportunityDetail, OpportunityStatus, OpportunityTab, ParticipantOpportunities } from '@shared/api-types';
 import { graph } from '../db/graph';
 import type { Db } from '../db/driver';
+import { collectVariables, reuseScope } from './consent';
 import { conceptNames } from './ledger';
 import { participantMatches } from './match';
 
@@ -11,9 +12,14 @@ export type SeedVariable = CampaignVariable & { label?: string };
 
 type OppRow = {
   id: number; status: OpportunityStatus; missing: string; comp_max_cents: number; offered_at: string; completed_at: string | null; reviewed_at: string | null;
-  campaign_id: number; variables_json: string; study_id: number; study_name: string; purpose: string; license_term_months: number; criteria_json: string | null;
+  campaign_id: number; campaign_name: string; parent_campaign_id: number | null; variables_json: string; study_id: number; study_name: string; purpose: string; license_term_months: number; criteria_json: string | null;
   org_name: string; org_type: string; enrollment_id: number | null;
 };
+
+/** Card title: a variable-request child campaign is shown by its own name; the root campaign by the study's. */
+export function displayTitle(r: { campaign_name: string | null; parent_campaign_id: number | null; study_name: string }): string {
+  return r.parent_campaign_id !== null && r.campaign_name ? r.campaign_name : r.study_name;
+}
 
 export function tabOf(status: OpportunityStatus): OpportunityTab {
   if (status === 'offered' || status === 'viewed' || status === 'reviewed') return 'available';
@@ -39,7 +45,7 @@ export function variableLabel(v: SeedVariable, names: Map<string, string>): stri
 }
 
 const SELECT = `SELECT op.id, op.status, op.missing_concepts_json AS missing, op.comp_max_cents, op.offered_at, op.completed_at, op.reviewed_at,
-      cp.id AS campaign_id, cp.variables_json, s.id AS study_id, s.name AS study_name, s.purpose, s.license_term_months, cd.criteria_json,
+      cp.id AS campaign_id, cp.name AS campaign_name, cp.parent_campaign_id, cp.variables_json, s.id AS study_id, s.name AS study_name, s.purpose, s.license_term_months, cd.criteria_json,
       o.name AS org_name, o.type AS org_type, (SELECT e.id FROM enrollment e WHERE e.opportunity_id = op.id ORDER BY e.id DESC LIMIT 1) AS enrollment_id
    FROM opportunity op JOIN campaign cp ON cp.id = op.campaign_id JOIN study s ON s.id = cp.study_id JOIN buyer_org o ON o.id = s.buyer_org_id
    LEFT JOIN cohort_definition cd ON cd.id = s.cohort_definition_id`;
@@ -62,7 +68,7 @@ export function opportunityDetail(participantId: number, id: number, db: Db = gr
   const card = toCard(r, participantId, db);
   const names = conceptNames(db);
   const vars = JSON.parse(r.variables_json) as SeedVariable[];
-  const collect = vars.filter((v) => v.mode !== 'reuse');
+  const collect = toCollect(vars, r.missing);
   const receive = Array.from(new Set(vars.map((v) => names.get(v.conceptSlug) ?? v.conceptSlug)));
   return {
     ...card,
@@ -77,29 +83,37 @@ export function opportunityDetail(participantId: number, id: number, db: Db = gr
       recontact: 'platform_only',
       compCents: r.comp_max_cents,
       perTask: collect.map((v) => ({ conceptSlug: v.conceptSlug, name: names.get(v.conceptSlug) ?? v.conceptSlug, compCents: v.compCents, method: v.requirement.protocol?.method ?? 'protocol', durationDays: v.requirement.protocol?.durationDays ?? 1 })),
-      reusedCompCents: vars.filter((v) => v.mode === 'reuse').reduce((a, v) => a + v.compCents, 0),
+      reusedCompCents: reuseScope(vars, r.missing, db).reduce((a, s) => a + s.cents, 0),
     },
   };
+}
+
+/** What THIS participant has to collect: collect_all variables plus the collect_if_missing ones listed in the opportunity (same rule as enroll()). A reuse-only offer has none. */
+export function toCollect(vars: SeedVariable[], missingJson: string): SeedVariable[] {
+  return collectVariables(vars, missingJson);
+}
+/** What is REUSED under the opportunity (licensed, not collected): reuse variables + held collect_if_missing variables — labelled by concept name. */
+export function toReused(vars: SeedVariable[], missingJson: string, names: Map<string, string>, db: Db): string[] {
+  return reuseScope(vars, missingJson, db).map((s) => (s.variable.mode === 'reuse' ? variableLabel(s.variable, names) : names.get(s.conceptSlug) ?? s.conceptSlug));
 }
 
 function toCard(r: OppRow, participantId: number, db: Db): OpportunityCard {
   const names = conceptNames(db);
   const vars = JSON.parse(r.variables_json) as SeedVariable[];
-  const collect = vars.filter((v) => v.mode !== 'reuse');
-  const reuse = vars.filter((v) => v.mode === 'reuse');
+  const collect = toCollect(vars, r.missing);
   const criteria = r.criteria_json ? CohortCriteria.parse(JSON.parse(r.criteria_json)) : null;
   return {
     id: r.id,
     status: r.status,
     tab: tabOf(r.status),
-    title: r.study_name,
+    title: displayTitle(r),
     sponsor: r.org_name,
     sponsorType: sponsorType(r.org_type),
     purpose: r.purpose,
     compCents: r.comp_max_cents,
     compIsMax: collect.length >= 4,
     requirements: collect.map((v) => variableLabel(v, names)),
-    reused: reuse.map((v) => variableLabel(v, names)),
+    reused: toReused(vars, r.missing, names, db),
     likelyMatch: criteria ? participantMatches(criteria, participantId, db) : false,
     campaignId: r.campaign_id,
     studyId: r.study_id,

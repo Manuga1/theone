@@ -10,6 +10,7 @@ import { logActivity } from './activity';
 import { computeCompleteness, overlays } from './completeness';
 import { rebuildCoverage } from './coverage';
 import { conceptBySlug, leaves } from './ontology';
+import { generateInitialSync } from './simulate';
 
 type SourceRow = { id: number; kind: string; vendor: string; label: string; action_label: string; status: SourceCard['status']; connected_at: string | null; last_sync_at: string | null; verified: number };
 
@@ -51,16 +52,31 @@ export function participantSources(participantId: number, db: Db = graph()): Par
   return { sources: listSources(participantId, db), missing: missingDimensions(participantId, db) };
 }
 
-export function connectSource(participantId: number, sourceId: number, db: Db = graph()): void {
+/**
+ * Connect a source. Reconnecting restores the observations a disconnect soft-deleted; a source with no data of its own
+ * runs a small deterministic initial sync (connected-device provenance) for the concepts it feeds. Coverage is rebuilt
+ * and the source is verified only when it actually holds data.
+ */
+export function connectSource(participantId: number, sourceId: number, db: Db = graph()): { observations: number; synced: string[] } {
   const s = db.get<SourceRow>('SELECT * FROM source WHERE id = ? AND participant_id = ?', sourceId, participantId);
   if (!s) throw notFound('source');
   const now = nowIso();
-  db.tx(() => {
-    db.run("UPDATE source SET status = 'connected', verified = 1, connected_at = COALESCE(connected_at, ?), last_sync_at = ? WHERE id = ?", now, now, sourceId);
-    // reconnecting restores observations soft-deleted by a disconnect
+  return db.tx(() => {
     db.run('UPDATE observation SET deleted_at = NULL WHERE participant_id = ? AND source_id = ? AND deleted_at IS NOT NULL', participantId, sourceId);
+    let synced: string[] = [];
+    let generated = 0;
+    const existing = db.get<{ n: number }>('SELECT COUNT(*) AS n FROM observation WHERE participant_id = ? AND source_id = ? AND deleted_at IS NULL', participantId, sourceId)?.n ?? 0;
+    if (existing === 0) {
+      const r = generateInitialSync(db, participantId, { id: sourceId, kind: s.kind }, now);
+      synced = r.concepts;
+      generated = r.observations;
+    }
+    const hasData = existing + generated > 0;
+    db.run("UPDATE source SET status = 'connected', verified = ?, connected_at = COALESCE(connected_at, ?), last_sync_at = ? WHERE id = ?", hasData ? 1 : 0, now, now, sourceId);
     rebuildCoverage(participantId, db);
-    logActivity(db, { participantId, kind: 'source_connected', text: `${s.label} connected (${s.vendor})`, occurredAt: now });
+    const names = synced.map((slug) => conceptBySlug(slug, db)?.name ?? slug);
+    logActivity(db, { participantId, kind: 'source_connected', text: `${s.label} connected (${s.vendor})${generated ? ` — initial sync: ${generated.toLocaleString('en-US')} records (${names.join(', ')})` : existing ? ' — data restored' : ''}`, occurredAt: now });
+    return { observations: existing + generated, synced };
   });
 }
 

@@ -33,13 +33,14 @@ type Writer = {
   counts: { obs: number; artifacts: number; firstArtifact: number | null };
 };
 
-function writer(db: Db, pid: number, c: ConceptRow, sourceId: number, contributionId: number, now: string): Writer {
+function writer(db: Db, pid: number, c: ConceptRow, sourceId: number, contributionId: number | null, now: string, provOverride?: ProvenanceClass): Writer {
   const counts = { obs: 0, artifacts: 0, firstArtifact: null as number | null };
   return {
     counts,
     obs: (o) => {
       counts.obs++;
-      return db.run(OBS_SQL, pid, c.id, o.num ?? null, o.text ?? null, o.json === undefined ? null : JSON.stringify(o.json), o.unit ?? c.unit, o.at, sourceId, o.method, o.prov, PROVENANCE_RANK[o.prov], 'verified',
+      const prov = provOverride ?? o.prov;
+      return db.run(OBS_SQL, pid, c.id, o.num ?? null, o.text ?? null, o.json === undefined ? null : JSON.stringify(o.json), o.unit ?? c.unit, o.at, sourceId, o.method, prov, PROVENANCE_RANK[prov], 'verified',
         o.confidence ?? null, o.artifact ?? null, o.derivedFrom ?? null, o.derivation ?? null, contributionId, now).lastId;
     },
     artifact: (kind, uri, bytes, capturedAt) => {
@@ -82,15 +83,41 @@ function resolveSource(db: Db, pid: number, c: ConceptRow, method: string, now: 
 
 const BP_TIMES = ['07:05', '13:10', '17:30', '21:00'];
 
+/** What one generation run writes: a protocol contribution (contribution_id set, protocol_measurement) or a device's initial sync (connected_device). */
+export type GenSpec = {
+  method: string; durationDays: number; sourceId: number; contributionId: number | null; rngKey: string;
+  /** provenance for every row written (generators describe protocol rows; an initial sync rewrites them as connected_device) */
+  prov?: ProvenanceClass;
+  /** method label written on each observation row ('protocol' for contributions, 'device' / 'photo' / … for syncs) */
+  methodLabel?: string;
+};
+
+/** Typical daily values for the simple one-reading-per-day generator (device syncs of wearables, scales, sensors). */
+const DAILY_BASE: Record<string, { base: number; sd: number; decimals?: number }> = {
+  'physiology.cardiovascular.heart_rate': { base: 64, sd: 3 }, 'physiology.cardiovascular.hrv': { base: 38, sd: 5 }, 'physiology.sleep.sleep_duration': { base: 6.9, sd: 0.5, decimals: 1 },
+  'physiology.sleep.sleep_stages': { base: 75, sd: 10 }, 'physiology.sleep.spo2': { base: 96, sd: 1 }, 'physiology.mobility.steps': { base: 7800, sd: 2200 }, 'physiology.mobility.active_minutes': { base: 32, sd: 9 },
+  'physiology.metabolic.weight': { base: 90.5, sd: 0.4, decimals: 1 }, 'environment.air_quality.aqi_exposure': { base: 42, sd: 14 }, 'environment.residential.noise_exposure': { base: 54, sd: 4 },
+  'behavior.physical_activity.sedentary_time': { base: 8.5, sd: 1.2, decimals: 1 }, 'physiology.metabolic.body_composition': { base: 27, sd: 0.4, decimals: 1 },
+};
+
 /** Generate protocol data for a contribution (detailed participant only). Deterministic per contribution id. */
 function generate(db: Db, pid: number, c: ConceptRow, contrib: ContribRow, protocol: { trials?: number; device?: string } | undefined, now: string): Writer['counts'] {
-  const rng = new Rng(`sim:${contrib.id}`);
   const sourceId = resolveSource(db, pid, c, contrib.method, now);
-  const w = writer(db, pid, c, sourceId, contrib.id, now);
-  const days = Math.max(1, contrib.duration_days);
-  const day = (i: number) => addDays(DEMO_TODAY, -(days - 1 - i));
+  return generateData(db, pid, c, { method: contrib.method, durationDays: contrib.duration_days, sourceId, contributionId: contrib.id, rngKey: `sim:${contrib.id}` }, protocol, now);
+}
+
+/** The per-method generators (BP 4/day, CGM 96/day, diary photos → derived kcal, grip trials, kits, surveys, daily readings). */
+export function generateData(db: Db, pid: number, c: ConceptRow, spec: GenSpec, protocol: { trials?: number; device?: string } | undefined, now: string): Writer['counts'] {
+  const rng = new Rng(spec.rngKey);
+  const w = writer(db, pid, c, spec.sourceId, spec.contributionId, now, spec.prov);
+  const days = Math.max(1, spec.durationDays);
+  // multi-day series end yesterday so no reading is stamped after the fixed demo clock; single-shot kits/uploads land today at noon
+  const end = ['device', 'photo', 'daily', 'survey'].includes(spec.method) ? addDays(DEMO_TODAY, -1) : DEMO_TODAY;
+  const day = (i: number) => addDays(end, -(days - 1 - i));
   const tag = c.slug.split('.').pop() ?? 'protocol';
-  switch (contrib.method) {
+  const contribId = spec.contributionId ?? 'sync';
+  const ml = spec.methodLabel;
+  switch (spec.method) {
     case 'device': {
       const bp = c.slug.endsWith('blood_pressure');
       const cgm = c.slug.endsWith('cgm');
@@ -100,13 +127,13 @@ function generate(db: Db, pid: number, c: ConceptRow, contrib: ContribRow, proto
       const values: number[] = [];
       for (let d = 0; d < days; d++) {
         const date = day(d);
-        const art = w.artifact('device_raw', `${protocol?.device ? protocol.device.toLowerCase().replace(/\s+/g, '-') : tag}://protocol/${contrib.id}/${date}.json`, 1800 + rng.int(0, 400), date);
+        const art = w.artifact('device_raw', `${protocol?.device ? protocol.device.toLowerCase().replace(/\s+/g, '-') : tag}://protocol/${contribId}/${date}.json`, 1800 + rng.int(0, 400), date);
         for (let k = 0; k < perDay; k++) {
           const t = bp ? `${BP_TIMES[k]}:00Z` : `${String(Math.floor((k * 24) / perDay)).padStart(2, '0')}:${String((k * (1440 / perDay)) % 60).padStart(2, '0')}:00Z`;
           level = 0.85 * level + 0.15 * (bp ? 131 : cgm ? 138 : 50) + rng.normal(0, bp ? 1.5 : cgm ? 6 : 2);
           const v = Math.round(level + rng.normal(0, bp ? 4 : 10));
           values.push(v);
-          const id = w.obs({ num: v, json: bp ? { systolic: v, diastolic: Math.round(v * 0.62 + rng.normal(0, 3)), pulse: Math.round(66 + rng.normal(0, 4)) } : undefined, at: `${date}T${t}`, method: 'protocol', prov: 'protocol_measurement', artifact: art, confidence: 0.98 });
+          const id = w.obs({ num: v, json: bp ? { systolic: v, diastolic: Math.round(v * 0.62 + rng.normal(0, 3)), pulse: Math.round(66 + rng.normal(0, 4)) } : undefined, at: `${date}T${t}`, method: ml ?? 'protocol', prov: 'protocol_measurement', artifact: art, confidence: 0.98 });
           if (first === null) first = id;
         }
       }
@@ -121,9 +148,9 @@ function generate(db: Db, pid: number, c: ConceptRow, contrib: ContribRow, proto
         const date = day(d);
         times.forEach((t, s) => {
           const at = `${date}T${t}:00Z`;
-          const art = w.artifact('photo', `photo://protocol/${contrib.id}/${date}-${s}.jpg`, 1_900_000 + rng.int(0, 900_000), at);
+          const art = w.artifact('photo', `photo://protocol/${contribId}/${date}-${s}.jpg`, 1_900_000 + rng.int(0, 900_000), at);
           const kcal = Math.round((s === 0 ? 420 : s === 1 ? 610 : 720) + rng.normal(0, 90));
-          const raw = w.obs({ text: rng.pick(meals), at, method: 'photo', prov: 'photo_derived', artifact: art, confidence: 0.88 });
+          const raw = w.obs({ text: rng.pick(meals), at, method: ml ?? 'photo', prov: 'photo_derived', artifact: art, confidence: 0.88 });
           w.obs({ num: kcal, json: { kcal, carbs_g: Math.round((kcal * 0.45) / 4), protein_g: Math.round((kcal * 0.25) / 4), fat_g: Math.round((kcal * 0.3) / 9) }, unit: 'kcal', at, method: 'derived', prov: 'photo_derived', derivedFrom: raw, derivation: 'photo_nutrition_estimate', confidence: 0.76 });
         });
       }
@@ -133,56 +160,111 @@ function generate(db: Db, pid: number, c: ConceptRow, contrib: ContribRow, proto
       if (c.slug.endsWith('grip_strength')) {
         const trials = protocol?.trials ?? 3;
         const date = day(days - 1);
-        const art = w.artifact('device_raw', `dyno://protocol/${contrib.id}/${date}.csv`, 2_400, date);
+        const art = w.artifact('device_raw', `dyno://protocol/${contribId}/${date}.csv`, 2_400, date);
         const base = { right: 44 + rng.normal(0, 3), left: 41 + rng.normal(0, 3) };
         let best = 0, first: number | null = null;
         for (const hand of ['right', 'left'] as const) for (let t = 1; t <= trials; t++) {
           const v = Math.round((base[hand] + rng.normal(0, 1.4)) * 10) / 10;
           best = Math.max(best, v);
-          const id = w.obs({ num: v, json: { hand, trial: t }, unit: 'kg', at: `${date}T10:${String(10 + t * 2 + (hand === 'left' ? 10 : 0)).padStart(2, '0')}:00Z`, method: 'protocol', prov: 'protocol_measurement', artifact: art, confidence: 0.97 });
+          const id = w.obs({ num: v, json: { hand, trial: t }, unit: 'kg', at: `${date}T10:${String(10 + t * 2 + (hand === 'left' ? 10 : 0)).padStart(2, '0')}:00Z`, method: ml ?? 'protocol', prov: 'protocol_measurement', artifact: art, confidence: 0.97 });
           if (first === null) first = id;
         }
         w.obs({ num: best, json: { best, trials, hands: 2 }, unit: 'kg', at: `${date}T10:40:00Z`, method: 'derived', prov: 'protocol_measurement', derivedFrom: first, derivation: 'best_of_trials' });
       } else {
-        for (let d = 0; d < days; d++) w.obs({ num: Math.round(rng.normal(50, 8) * 10) / 10, at: `${day(d)}T09:00:00Z`, method: 'protocol', prov: 'protocol_measurement', confidence: 0.95 });
+        for (let d = 0; d < days; d++) w.obs({ num: Math.round(rng.normal(50, 8) * 10) / 10, at: `${day(d)}T09:00:00Z`, method: ml ?? 'protocol', prov: 'protocol_measurement', confidence: 0.95 });
       }
       break;
     }
     case 'kit': {
       const date = day(days - 1);
       if (c.slug.endsWith('gut_microbiome')) {
-        const art = w.artifact('sequencing', `seq://protocol/${contrib.id}/16s.fastq.gz`, 1_240_000_000, date);
+        const art = w.artifact('sequencing', `seq://protocol/${contribId}/16s.fastq.gz`, 1_240_000_000, date);
         const taxa = { Bacteroides: 0.28, Faecalibacterium: 0.14, Prevotella: 0.09, Bifidobacterium: 0.07, Akkermansia: 0.04, Roseburia: 0.06, other: 0.32 };
         for (const k of Object.keys(taxa) as (keyof typeof taxa)[]) taxa[k] = Math.round((taxa[k] + rng.normal(0, 0.01)) * 1000) / 1000;
-        const raw = w.obs({ text: 'Gut microbiome 16S profile (stool kit)', json: { taxa, shannon: Math.round((3.4 + rng.normal(0, 0.2)) * 100) / 100, reads: 48_000 + rng.int(0, 9_000) }, at: `${date}T12:00:00Z`, method: 'kit', prov: 'protocol_measurement', artifact: art, confidence: 0.96 });
+        const raw = w.obs({ text: 'Gut microbiome 16S profile (stool kit)', json: { taxa, shannon: Math.round((3.4 + rng.normal(0, 0.2)) * 100) / 100, reads: 48_000 + rng.int(0, 9_000) }, at: `${date}T12:00:00Z`, method: ml ?? 'kit', prov: 'protocol_measurement', artifact: art, confidence: 0.96 });
         w.obs({ num: Math.round((0.62 + rng.normal(0, 0.05)) * 100) / 100, json: { firmicutes_bacteroidetes_ratio: 0.62 }, at: `${date}T12:00:00Z`, method: 'derived', prov: 'protocol_measurement', derivedFrom: raw, derivation: 'taxa_summary' });
       } else if (c.slug.endsWith('exome')) {
-        const art = w.artifact('vcf', `file://protocol/${contrib.id}/exome.vcf.gz`, 96_000_000, date);
-        w.obs({ text: `Whole-exome sequencing (GRCh38), ${(47_000 + rng.int(0, 2_500)).toLocaleString('en-US')} variants`, at: `${date}T12:00:00Z`, method: 'kit', prov: 'protocol_measurement', artifact: art, confidence: 0.99 });
+        const art = w.artifact('vcf', `file://protocol/${contribId}/exome.vcf.gz`, 96_000_000, date);
+        w.obs({ text: `Whole-exome sequencing (GRCh38), ${(47_000 + rng.int(0, 2_500)).toLocaleString('en-US')} variants`, at: `${date}T12:00:00Z`, method: ml ?? 'kit', prov: 'protocol_measurement', artifact: art, confidence: 0.99 });
       } else {
         for (let d = 0; d < days; d++) {
           const dd = day(d);
-          const art = w.artifact('ehr_doc', `lab://protocol/${contrib.id}/${dd}.pdf`, 140_000, dd);
-          w.obs({ num: Math.round(rng.normal(c.slug.endsWith('lipid_panel') ? 192 : 100, 12)), at: `${dd}T08:30:00Z`, method: 'kit', prov: 'protocol_measurement', artifact: art, confidence: 0.99 });
+          const art = w.artifact('ehr_doc', `lab://protocol/${contribId}/${dd}.pdf`, 140_000, dd);
+          w.obs({ num: Math.round(rng.normal(c.slug.endsWith('lipid_panel') ? 192 : 100, 12)), at: `${dd}T08:30:00Z`, method: ml ?? 'kit', prov: 'protocol_measurement', artifact: art, confidence: 0.99 });
         }
       }
       break;
     }
     case 'upload': {
       const date = day(days - 1);
-      const art = w.artifact('file', `file://protocol/${contrib.id}/${tag}.bin`, 4_000_000 + rng.int(0, 2_000_000), date);
-      w.obs({ text: `${c.name} uploaded under study protocol`, at: `${date}T12:00:00Z`, method: 'upload', prov: 'protocol_measurement', artifact: art });
+      const art = w.artifact('file', `file://protocol/${contribId}/${tag}.bin`, 4_000_000 + rng.int(0, 2_000_000), date);
+      w.obs({ text: `${c.name} uploaded under study protocol`, at: `${date}T12:00:00Z`, method: ml ?? 'upload', prov: 'protocol_measurement', artifact: art });
+      break;
+    }
+    case 'daily': {
+      // one reading per day (wearables, scales, sensors, records): numeric where the concept has a typical value, else a dated text record
+      const spec2 = DAILY_BASE[c.slug];
+      let level = spec2?.base ?? 50;
+      for (let d = 0; d < days; d++) {
+        const date = day(d);
+        if (spec2) {
+          level = 0.7 * level + 0.3 * spec2.base + rng.normal(0, spec2.sd);
+          const dec = spec2.decimals ?? 0;
+          const v = Math.round(level * 10 ** dec) / 10 ** dec;
+          w.obs({ num: v, at: `${date}T${c.slug.includes('sleep') ? '07:00' : c.slug.includes('weight') ? '07:20' : '12:00'}:00Z`, method: ml ?? 'device', prov: 'protocol_measurement', confidence: 0.95 });
+        } else if (d === days - 1) {
+          w.obs({ text: `${c.name} record imported`, at: `${date}T12:00:00Z`, method: ml ?? 'device', prov: 'protocol_measurement' });
+        }
+      }
       break;
     }
     default: {
       // survey (and anything else): one JSON answer set per protocol day
       for (let d = 0; d < days; d++) {
         const score = rng.int(0, 10);
-        w.obs({ num: score, json: { instrument: c.name, score, answers: Array.from({ length: 5 }, () => rng.int(0, 4)) }, at: `${day(d)}T18:00:00Z`, method: 'survey', prov: 'protocol_measurement' });
+        w.obs({ num: score, json: { instrument: c.name, score, answers: Array.from({ length: 5 }, () => rng.int(0, 4)) }, at: `${day(d)}T18:00:00Z`, method: ml ?? 'survey', prov: 'protocol_measurement' });
       }
     }
   }
   return w.counts;
+}
+
+/** Concepts a source kind feeds, with the generator used for its initial sync. */
+const KIND_SYNC: Record<string, { slug: string; method: string; methodLabel: string }[]> = {
+  bp_device: [{ slug: 'physiology.cardiovascular.blood_pressure', method: 'device', methodLabel: 'device' }],
+  cgm: [{ slug: 'physiology.metabolic.cgm', method: 'device', methodLabel: 'device' }],
+  dynamometer: [{ slug: 'physiology.strength.grip_strength', method: 'protocol', methodLabel: 'device' }],
+  microbiome: [{ slug: 'biology.microbiome.gut_microbiome', method: 'kit', methodLabel: 'kit' }],
+  genomics: [{ slug: 'biology.genomics.exome', method: 'kit', methodLabel: 'upload' }],
+  nutrition: [{ slug: 'behavior.nutrition.food_log', method: 'photo', methodLabel: 'photo' }],
+  wearable: ['physiology.cardiovascular.heart_rate', 'physiology.cardiovascular.hrv', 'physiology.sleep.sleep_duration', 'physiology.sleep.sleep_stages', 'physiology.mobility.steps', 'physiology.mobility.active_minutes'].map((slug) => ({ slug, method: 'daily', methodLabel: 'device' })),
+  scale: [{ slug: 'physiology.metabolic.weight', method: 'daily', methodLabel: 'device' }, { slug: 'physiology.metabolic.body_composition', method: 'daily', methodLabel: 'device' }],
+  environment: [{ slug: 'environment.air_quality.aqi_exposure', method: 'daily', methodLabel: 'device' }],
+  lab: [{ slug: 'clinical.labs.lipid_panel', method: 'kit', methodLabel: 'lab' }, { slug: 'clinical.labs.metabolic_panel', method: 'kit', methodLabel: 'lab' }],
+  ehr: [{ slug: 'clinical.encounters.ehr_history', method: 'daily', methodLabel: 'ehr' }],
+  pharmacy: [{ slug: 'clinical.medications.medication_list', method: 'daily', methodLabel: 'ehr' }],
+  imaging: [{ slug: 'imaging.mri.mri_musculoskeletal', method: 'upload', methodLabel: 'upload' }],
+  survey: [{ slug: 'outcomes.patient_reported.symptom_survey', method: 'survey', methodLabel: 'survey' }],
+};
+
+/**
+ * Initial sync when a source is connected (inside a tx): a small deterministic window of connected-device data for the
+ * concepts the source feeds (≈ 14 days, or just past the concept's span requirement when that is shorter). Returns the
+ * rows written; the caller rebuilds coverage and marks the source verified only when data exists.
+ */
+export function generateInitialSync(db: Db, pid: number, source: { id: number; kind: string }, now: string, days = 14): { observations: number; artifacts: number; concepts: string[] } {
+  const out = { observations: 0, artifacts: 0, concepts: [] as string[] };
+  for (const spec of KIND_SYNC[source.kind] ?? []) {
+    const c = db.get<ConceptRow>('SELECT * FROM concept WHERE slug = ?', spec.slug);
+    if (!c) continue;
+    const span = c.min_span_days > 0 && c.min_span_days <= days ? c.min_span_days + 1 : days; // just past a short span requirement (CGM 14 d → 15 d)
+    const n = spec.method === 'kit' || spec.method === 'upload' || spec.method === 'protocol' ? 1 : span;
+    const counts = generateData(db, pid, c, { method: spec.method, durationDays: n, sourceId: source.id, contributionId: null, rngKey: `sync:${source.id}:${c.id}:${now}`, prov: 'connected_device', methodLabel: spec.methodLabel }, undefined, now);
+    out.observations += counts.obs;
+    out.artifacts += counts.artifacts;
+    if (counts.obs > 0) out.concepts.push(c.slug);
+  }
+  return out;
 }
 
 function contributionRow(id: number, db: Db): ContribRow | undefined {
@@ -207,7 +289,15 @@ export function finalizeIfComplete(db: Db, o: OppJoined, now: string): { complet
   db.run("UPDATE enrollment SET status = 'completed', completed_at = ? WHERE opportunity_id = ? AND status = 'active'", now, o.id);
   const verifiedSlugs = db.all<{ slug: string }>("SELECT k.slug FROM contribution c JOIN concept k ON k.id = c.concept_id WHERE c.opportunity_id = ? AND c.status = 'verified'", o.id).map((r) => r.slug);
   const lic = db.get<{ id: number; scope: string }>('SELECT l.id, l.scope_concepts_json AS scope FROM license l JOIN enrollment e ON e.id = l.enrollment_id WHERE e.opportunity_id = ? ORDER BY l.id DESC LIMIT 1', o.id);
-  if (lic) db.run('UPDATE license SET scope_concepts_json = ? WHERE id = ?', JSON.stringify(Array.from(new Set([...(JSON.parse(lic.scope) as string[]), ...verifiedSlugs]))), lic.id);
+  if (lic) {
+    const prev = JSON.parse(lic.scope) as string[];
+    db.run('UPDATE license SET scope_concepts_json = ? WHERE id = ?', JSON.stringify(Array.from(new Set([...prev, ...verifiedSlugs]))), lic.id);
+    // a line (0¢: the protocol payment is the contribution's) for every newly scoped concept, so the node's "Research use" counts this license
+    for (const slug of verifiedSlugs) {
+      const k = db.get<{ id: number }>('SELECT id FROM concept WHERE slug = ?', slug);
+      if (k && !db.get('SELECT 1 FROM license_line WHERE license_id = ? AND concept_id = ?', lic.id, k.id)) db.run('INSERT INTO license_line (license_id, concept_id, cents, created_at) VALUES (?,?,0,?)', lic.id, k.id, now);
+    }
+  }
   db.run('UPDATE study SET updated_at = ? WHERE id = ?', now, o.study_id);
   return { complete: true, rejected };
 }

@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { FastForward, Users, RefreshCw, Database, PlusCircle } from 'lucide-react';
-import type { StudyDetail, StudyParticipants } from '@shared/api-types';
+import type { StudyCounters, StudyDetail, StudyParticipants } from '@shared/api-types';
 import { api } from '../api';
 import { useApi } from '../hooks';
 import { useAction } from '../useAction';
@@ -22,6 +22,10 @@ export default function StudyPage() {
   if (!d) return <div className="faint small">Loading…</div>;
   const c = d.counters;
   const pct = (n: number) => (d.targetN > 0 ? Math.min(100, (n / d.targetN) * 100) : 0);
+  // Per-campaign counters are additive on StudyDetail.campaigns; render the table only when the API serves them.
+  type CampaignRow = StudyDetail['campaigns'][number] & { counters: StudyCounters };
+  const withCounters = (d.campaigns as (Omit<StudyDetail['campaigns'][number], 'counters'> & { counters?: StudyCounters | null })[]).filter((cp): cp is CampaignRow => !!cp.counters);
+  const campaignRows: CampaignRow[] = [...withCounters.filter((cp) => !cp.parentCampaignId), ...withCounters.filter((cp) => !!cp.parentCampaignId)];
 
   return (
     <div className="col gap-16">
@@ -50,6 +54,27 @@ export default function StudyPage() {
               <div><span>Quality accepted</span><span className="v"><KNum n={c.qualityAccepted} /></span></div>
             </div>
             <div className="mt-12"><BarRow label="To target" value={pct(c.qualityAccepted)} tone="green" labelWidth={64} /></div>
+            {campaignRows.length > 0 && (
+              <div className="mt-12">
+                <div className="section-title" style={{ marginBottom: 6 }}>Per campaign</div>
+                <div className="table-wrap">
+                  <table className="table table--compact">
+                    <thead><tr><th>Campaign</th><th className="num">Invited</th><th className="num">Accepted</th><th className="num">Completed</th><th className="num">Quality</th></tr></thead>
+                    <tbody>
+                      {campaignRows.map((cp) => (
+                        <tr key={cp.id}>
+                          <td className={cp.parentCampaignId ? 'muted' : 'strong'} style={cp.parentCampaignId ? { paddingLeft: 18 } : undefined}>{cp.parentCampaignId ? '↳ ' : ''}{cp.name}</td>
+                          <td className="num">{kfloor(cp.counters.invited)}</td>
+                          <td className="num">{kfloor(cp.counters.accepted)}</td>
+                          <td className="num">{kfloor(cp.counters.completed)}</td>
+                          <td className="num">{kfloor(cp.counters.qualityAccepted)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </Card>
           <Card title="Campaigns" soft>
             <div className="list">
@@ -64,7 +89,7 @@ export default function StudyPage() {
               {d.coverage.map((v) => <BarRow key={v.slug} label={v.label} value={v.pct} display={`${Math.round(v.pct)}%`} tone={v.pct >= 90 ? 'green' : v.pct >= 60 ? 'accent' : 'amber'} labelWidth={160} />)}
               {d.coverage.length === 0 && <div className="rail__empty">No collection variables.</div>}
             </div>
-            <div className="callout callout--amber mt-12">{d.replacementNote || `${kfloor(c.needReplacement)} participants need replacement / recontact.`}</div>
+            <div className={`callout mt-12 ${c.needReplacement === 0 ? 'callout--green' : 'callout--amber'}`}>{c.needReplacement === 0 ? (d.replacementNote || 'No participants need replacement or recontact right now.') : (d.replacementNote || `${kfloor(c.needReplacement)} participants need replacement / recontact.`)}</div>
           </Card>
           <div className="grid grid--2">
             <Card title="Dataset" soft>

@@ -46,7 +46,11 @@ export const CONTRIBUTION_TRANSITIONS: Record<ContributionStatus, ContributionSt
 export const STARTED_STATUSES: OpportunityStatus[] = ['in_progress', 'submitted', 'verified', 'rejected', 'paid'];
 /** Statuses that still allow a response (the P6 "Available" tab). */
 export const OPEN_STATUSES: OpportunityStatus[] = ['offered', 'viewed', 'reviewed'];
-/** Statuses that need a replacement participant (B7 "need replacement / recontact"). */
+/**
+ * Statuses that need a replacement participant (B7 "need replacement / recontact"). Recontact never rewrites these to
+ * 'replaced' (counters would move backwards): the original keeps its terminal status and `replaced_by_id` links the
+ * replacement offer; "need replacement" counts only rows whose replaced_by_id IS NULL.
+ */
 export const REPLACEABLE_STATUSES: OpportunityStatus[] = ['declined', 'rejected', 'expired', 'withdrawn'];
 
 export function canTransition<S extends string>(table: Record<S, S[]>, from: S, to: S): boolean {
