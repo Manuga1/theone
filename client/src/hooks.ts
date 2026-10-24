@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, onChanged, onPersonaChange, getPersona } from './api';
+import { api, onChanged, onPersonaChange, getPersona, setPersona } from './api';
 import type { Persona } from '@shared/api-types';
 
 export type ApiState<T> = { data: T | null; error: Error | null; loading: boolean; reload: () => void };
@@ -46,7 +46,7 @@ export function usePersona(): [Persona, (p: Persona) => void] {
   const [p, setP] = useState<Persona>(getPersona());
   useEffect(() => onPersonaChange(setP), []);
   const set = useCallback((n: Persona) => {
-    import('./api').then((m) => m.setPersona(n));
+    setPersona(n);
   }, []);
   return [p, set];
 }
