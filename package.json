@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Local working model of a participant-owned health data asset platform: personal health graph, cohort engine, collection-campaign loop, controlled buyer view.",
   "engines": {
-    "node": ">=22.13"
+    "node": "22.x"
   },
   "scripts": {
     "dev": "concurrently -k -n api,web -c blue,green \"npm:dev:api\" \"npm:dev:web\"",

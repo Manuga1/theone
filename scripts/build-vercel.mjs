@@ -3,7 +3,9 @@
 //   functions/api/index.func/    the whole API bundled into one ESM file by esbuild, plus the build-time seed
 //                                (seed-data/graph.sqlite, vault.sqlite) that the function copies to /tmp on cold start
 // Run by `npm run build:vercel` (Vercel's Build Command). Needs Node 22.13+ for node:sqlite.
-import { cpSync, mkdirSync, rmSync, writeFileSync, existsSync, statSync } from 'node:fs';
+import { cpSync, mkdirSync, rmSync, writeFileSync, existsSync, statSync, createReadStream, createWriteStream } from 'node:fs';
+import { createGzip } from 'node:zlib';
+import { pipeline } from 'node:stream/promises';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,7 +14,8 @@ import { build } from 'esbuild';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const out = path.join(root, '.vercel', 'output');
 const funcDir = path.join(out, 'functions', 'api', 'index.func');
-const env = { ...process.env, NODE_OPTIONS: '--disable-warning=ExperimentalWarning' };
+// --experimental-sqlite is a no-op on Node >= 22.13 and required on 22.5–22.12
+const env = { ...process.env, NODE_OPTIONS: '--experimental-sqlite --disable-warning=ExperimentalWarning' };
 const run = (cmd, args) => {
   const r = spawnSync(cmd, args, { cwd: root, stdio: 'inherit', env, shell: process.platform === 'win32' });
   if (r.status !== 0) throw new Error(`${cmd} ${args.join(' ')} failed (${r.status})`);
@@ -47,18 +50,20 @@ await build({
 writeFileSync(path.join(funcDir, 'package.json'), JSON.stringify({ type: 'module' }));
 writeFileSync(
   path.join(funcDir, '.vc-config.json'),
-  JSON.stringify({ runtime: 'nodejs22.x', handler: 'index.mjs', launcherType: 'Nodejs', shouldAddHelpers: false, maxDuration: 60, memory: 1024, environment: { VERCEL: '1' } }, null, 2),
+  JSON.stringify({ runtime: 'nodejs22.x', handler: 'index.mjs', launcherType: 'Nodejs', shouldAddHelpers: false, maxDuration: 60, memory: 1024 }, null, 2),
 );
 
 // 4. seed data travels with the function (read-only there; copied to /tmp at runtime)
 const seedDir = path.join(funcDir, 'seed-data');
 mkdirSync(seedDir, { recursive: true });
+// gzipped: keeps every deployed file well under Vercel's 100 MB per-file limit; the function gunzips to /tmp on cold start
 let bytes = 0;
 for (const f of ['graph.sqlite', 'vault.sqlite']) {
   const src = path.join(root, 'data', f);
   if (!existsSync(src)) throw new Error(`missing ${src} after seed`);
-  cpSync(src, path.join(seedDir, f));
-  bytes += statSync(src).size;
+  const dst = path.join(seedDir, `${f}.gz`);
+  await pipeline(createReadStream(src), createGzip({ level: 6 }), createWriteStream(dst));
+  bytes += statSync(dst).size;
 }
 
 // 5. static + routes
@@ -78,4 +83,4 @@ writeFileSync(
     2,
   ),
 );
-console.log(`[build:vercel] .vercel/output ready in ${((Date.now() - t0) / 1000).toFixed(1)} s (seed data ${(bytes / 1e6).toFixed(0)} MB)`);
+console.log(`[build:vercel] .vercel/output ready in ${((Date.now() - t0) / 1000).toFixed(1)} s (seed data ${(bytes / 1e6).toFixed(0)} MB gzipped)`);
