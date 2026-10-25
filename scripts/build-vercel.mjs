@@ -14,8 +14,23 @@ import { build } from 'esbuild';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const out = path.join(root, '.vercel', 'output');
 const funcDir = path.join(out, 'functions', 'api', 'index.func');
-// --experimental-sqlite is a no-op on Node >= 22.13 and required on 22.5–22.12
-const env = { ...process.env, NODE_OPTIONS: '--experimental-sqlite --disable-warning=ExperimentalWarning' };
+// Diagnostics first: the build needs node:sqlite (Node >= 22.5; unflagged from 22.13).
+const [major, minor] = process.versions.node.split('.').map(Number);
+console.log(`[build:vercel] node ${process.versions.node} on ${process.platform}/${process.arch}, cwd ${process.cwd()}`);
+if (major < 22 || (major === 22 && minor < 5)) {
+  console.error(`[build:vercel] Node ${process.versions.node} has no node:sqlite. Set the project's Node.js version to 22.x (Vercel: Settings → General → Node.js Version).`);
+  process.exit(1);
+}
+const needsFlag = major === 22 && minor < 13;
+const nodeOptions = [needsFlag ? '--experimental-sqlite' : '', '--disable-warning=ExperimentalWarning'].filter(Boolean).join(' ');
+const env = { ...process.env, NODE_OPTIONS: nodeOptions };
+try {
+  await import('node:sqlite');
+  console.log('[build:vercel] node:sqlite OK');
+} catch (e) {
+  console.error('[build:vercel] node:sqlite failed to load:', e?.message);
+  if (!needsFlag) process.exit(1);
+}
 const run = (cmd, args) => {
   const r = spawnSync(cmd, args, { cwd: root, stdio: 'inherit', env, shell: process.platform === 'win32' });
   if (r.status !== 0) throw new Error(`${cmd} ${args.join(' ')} failed (${r.status})`);
