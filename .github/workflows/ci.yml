@@ -20,4 +20,6 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build:vercel
+        env:
+          VERCEL: '1'   # Vercel sets this during its build; mirror it
       - run: du -sh .vercel/output/functions/api/index.func && cat .vercel/output/config.json

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { graph } from '../db/graph';
+import { IS_BUNDLE } from '../db/paths';
 import { DEMO_NOW, DEMO_TODAY } from '@shared/clock';
 import type { DemoResetInput, DemoResetResult, DemoState, Health } from '@shared/api-types';
 import { resetDemo } from '../seed/reset';
@@ -34,7 +35,7 @@ demoRouter.get('/demo/state', (req, res) => {
     today: DEMO_TODAY,
     now: DEMO_NOW,
     participantPseudonym: detailed?.pseudonym ?? null,
-    hosted: !!process.env.VERCEL,
+    hosted: IS_BUNDLE || !!process.env.VERCEL,
   };
   res.json(body);
 });
