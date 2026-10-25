@@ -444,6 +444,8 @@ export type DemoState = {
   today: string;
   now: string;
   participantPseudonym: string | null;
+  /** true on a hosted (serverless) deployment: state lives on the serving instance and may reset */
+  hosted?: boolean;
 };
 export type Health = { ok: boolean; ready: boolean; seeded: boolean };
 export type Ok = { ok: true; writeVersion: number };

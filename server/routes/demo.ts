@@ -34,6 +34,7 @@ demoRouter.get('/demo/state', (req, res) => {
     today: DEMO_TODAY,
     now: DEMO_NOW,
     participantPseudonym: detailed?.pseudonym ?? null,
+    hosted: !!process.env.VERCEL,
   };
   res.json(body);
 });

@@ -93,6 +93,17 @@ tests/      vitest unit + API tests; e2e/ Playwright
 
 See [DEMO.md](DEMO.md) for the click-by-click script that the end-to-end test (`e2e/loop.spec.ts`) also runs: default cohort → funnel → gaps → expand with the **default modes** → proposal → launch → the participant's **reuse-only offer** (paid at accept) → the buyer requests gut microbiome → the participant accepts, syncs, revokes → the buyer's study and dataset move → Reset demo. It also says what changes if you set a mode to *Collect for all* instead (no reuse-only offer can exist; the participant gets a collection task instead).
 
+## Deploy to Vercel
+
+The repo ships a Vercel Build Output pipeline (`npm run build:vercel`, declared in `vercel.json`): the Vite client becomes static files, the whole API is bundled by esbuild into one serverless function, and the synthetic databases are generated **at build time** and shipped inside the function. On a cold start the function copies them to `/tmp` and works there.
+
+1. On vercel.com choose **Add New → Project** and import `Manuga1/theone`.
+2. Framework preset **Other**. The build command comes from `vercel.json`; leave Output Directory empty. Node.js 22.x (the default for new projects; see Settings → General if the build complains about `node:sqlite`).
+3. **Deploy.** The first build takes about a minute (the seed is ~15 s of it).
+4. Production branch: this code lives on `claude/busy-tesla-v610bi` while `main` still holds the previous site. Either merge the branch into `main`, or set **Settings → Git → Production Branch** to `claude/busy-tesla-v610bi` and redeploy.
+
+Hosted caveats: every serverless instance has its own copy of the data, so what you change (accepting an offer, launching a campaign) lives on the instance that served you and is gone when it is recycled. **Reset demo** reseeds that instance (≈ 15 s, inside the 60 s function limit). The footer reads "Hosted demo" in this mode. Build-time knobs: `SEED_SCALE=0.2` for a smaller function and faster cold starts, `SEED_DISABLED=1` for a schema-only deployment. For a persistent multi-user deployment run `npm start` on an ordinary server where `data/` is a real disk.
+
 ## Deviations from the mockups (deliberate, documented)
 
 - **Missing-data matrix side cells.** The deck's 829 / 1,403 / 917 cannot coexist with its own sequential funnel; the computed values are 1,529 / 697 / 571 (exome-only 622 matches).

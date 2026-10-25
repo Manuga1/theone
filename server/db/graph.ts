@@ -2,11 +2,15 @@
 // Contains NO direct identifiers. Buyer routes may import this module only.
 import { Db } from './driver';
 import { GRAPH_PATH } from './paths';
+import { ensureWritableCopy } from './bootstrap';
 
 let instance: Db | null = null;
 
 export function graph(): Db {
-  if (!instance) instance = new Db(GRAPH_PATH);
+  if (!instance) {
+    ensureWritableCopy(GRAPH_PATH);
+    instance = new Db(GRAPH_PATH);
+  }
   return instance;
 }
 /** Tests and the seed inject their own handle. */

@@ -139,6 +139,7 @@ export function Shell({ side, title, wide, children, state: stateProp, health: h
         <div className="shell__nav-foot">
           Demo clock {state?.today ?? '—'}
           <br />Synthetic data only
+          {state?.hosted ? <><br />Hosted demo: changes live on this server instance and may reset</> : null}
         </div>
       </aside>
       <div className="shell__main">
