@@ -27,42 +27,42 @@ export const DAILY_PROMPTS: { slug: string; question: string }[] = [
 const NEGATIVES = new Set(['no', 'none', 'n', 'nope', 'false', '0', 'skipped', 'not today', 'did not', "didn't"]);
 const POSITIVES = new Set(['yes', 'y', 'true', '1', 'yep', 'took them', 'done']);
 
-function loggedToday(db: Db, participantId: number, c: ConceptRow): boolean {
-  const ids = familyIds(c, db);
-  return !!db.get(`SELECT 1 FROM observation WHERE participant_id = ? AND deleted_at IS NULL AND substr(observed_at, 1, 10) = ? AND concept_id IN (${ids.map(() => '?').join(', ')}) LIMIT 1`, participantId, DEMO_TODAY, ...ids);
+async function loggedToday(db: Db, participantId: number, c: ConceptRow): Promise<boolean> {
+  const ids = await familyIds(c, db);
+  return !!await db.get(`SELECT 1 FROM observation WHERE participant_id = ? AND deleted_at IS NULL AND substr(observed_at, 1, 10) = ? AND concept_id IN (${ids.map(() => '?').join(', ')}) LIMIT 1`, participantId, DEMO_TODAY, ...ids);
 }
-function promptFor(c: ConceptRow, question: string, db: Db): CheckInPrompt {
-  const spec = leafSpecs(db).find((l) => l.slug === c.slug);
+async function promptFor(c: ConceptRow, question: string, db: Db): Promise<CheckInPrompt> {
+  const spec = (await leafSpecs(db)).find((l) => l.slug === c.slug);
   const fu = spec?.followUps[0];
   const valueKind: ValueKind = c.value_kind ?? 'text';
   const options = valueKind === 'boolean' ? ['yes', 'no'] : fu?.options ? [...fu.options, ...(fu.createsSubBranch ? ['none'] : [])] : undefined;
   return { id: c.slug, conceptSlug: c.slug, conceptName: c.name, question, valueKind, ...(options ? { options } : {}), unit: c.unit };
 }
 
-export function getCheckIn(participantId: number, db: Db = graph()): CheckIn {
-  const day = db.tableExists('checkin_day') ? db.get<{ done: number; reward_cents: number }>('SELECT done, reward_cents FROM checkin_day WHERE participant_id = ? AND date = ?', participantId, DEMO_TODAY) : undefined;
+export async function getCheckIn(participantId: number, db: Db = graph()): Promise<CheckIn> {
+  const day = await db.tableExists('checkin_day') ? await db.get<{ done: number; reward_cents: number }>('SELECT done, reward_cents FROM checkin_day WHERE participant_id = ? AND date = ?', participantId, DEMO_TODAY) : undefined;
   const prompts: CheckInPrompt[] = [];
-  if (db.tableExists('concept')) {
+  if (await db.tableExists('concept')) {
     for (const p of DAILY_PROMPTS) {
-      const c = conceptBySlug(p.slug, db);
-      if (!c || c.level !== 'leaf' || loggedToday(db, participantId, c)) continue;
-      prompts.push(promptFor(c, p.question, db));
+      const c = await conceptBySlug(p.slug, db);
+      if (!c || c.level !== 'leaf' || await loggedToday(db, participantId, c)) continue;
+      prompts.push((await promptFor(c, p.question, db)));
     }
   }
-  return { date: DEMO_TODAY, done: !!day?.done, prompts, streakDays: streakDays(participantId, db), rewardCents: day?.reward_cents ?? 0 };
+  return { date: DEMO_TODAY, done: !!day?.done, prompts, streakDays: await streakDays(participantId, db), rewardCents: day?.reward_cents ?? 0 };
 }
 
 type Answer = { id: string; value: string | number | boolean | null };
 
 /** Build the proposal one answer files (no classifier: the prompt already names the branch). null → nothing to file. */
-export function proposalForAnswer(db: Db, c: ConceptRow, raw: Answer['value'], now: string): { proposal: Proposal; text: string } | null {
+export async function proposalForAnswer(db: Db, c: ConceptRow, raw: Answer['value'], now: string): Promise<{ proposal: Proposal; text: string } | null> {
   if (raw === null || raw === undefined || (typeof raw === 'string' && !raw.trim())) return null;
-  const spec = leafSpecs(db).find((l) => l.slug === c.slug);
+  const spec = (await leafSpecs(db)).find((l) => l.slug === c.slug);
   const valueKind: ValueKind = c.value_kind ?? 'text';
   const text = typeof raw === 'boolean' ? (raw ? 'yes' : 'no') : String(raw).trim();
   const norm = normalise(text);
   const negative = typeof raw === 'boolean' ? !raw : NEGATIVES.has(norm);
-  const base: Proposal = { conceptSlug: c.slug, conceptName: c.name, path: conceptPath(c.slug, db), newConcept: null, confidence: 1, rationale: 'daily check-in answer', extracted: { valueText: text, observedAt: now, attributes: {}, context: null }, followUp: null, classifier: 'rules', alternatives: [] };
+  const base: Proposal = { conceptSlug: c.slug, conceptName: c.name, path: await conceptPath(c.slug, db), newConcept: null, confidence: 1, rationale: 'daily check-in answer', extracted: { valueText: text, observedAt: now, attributes: {}, context: null }, followUp: null, classifier: 'rules', alternatives: [] };
   const e = base.extracted;
   switch (valueKind) {
     case 'boolean':
@@ -106,29 +106,29 @@ export function proposalForAnswer(db: Db, c: ConceptRow, raw: Answer['value'], n
   }
 }
 
-export function submitCheckIn(participantId: number, input: CheckInInput, db: Db = graph()): CheckInResult {
+export async function submitCheckIn(participantId: number, input: CheckInInput, db: Db = graph()): Promise<CheckInResult> {
   const answers = Array.isArray(input?.answers) ? input.answers : null;
   if (!answers) throw badRequest('answers[] is required');
   const now = nowIso();
-  return db.tx(() => {
-    const items: IngestItem[] = [];
-    let rewardCents = 0;
-    const filedAnswers: Record<string, unknown> = {};
-    for (const a of answers) {
-      const c = a && typeof a.id === 'string' ? conceptBySlug(a.id, db) : undefined;
-      if (!c || c.level !== 'leaf' || !DAILY_PROMPTS.some((p) => p.slug === c.slug)) throw badRequest(`unknown check-in prompt ${String(a?.id)}`);
-      const built = proposalForAnswer(db, c, a.value, now);
-      if (!built) continue;
-      const id = insertItem(db, participantId, { kind: 'checkin', status: 'auto_filed', text: `${c.name}: ${built.text}`, proposal: built.proposal, createdAt: now });
-      const filed = fileItem(db, participantId, id, 'checkin', built.proposal, { provenance: 'self_report', allowVariantCreate: true, classifier: 'rules', sourceText: built.text }, 'auto_filed', now);
-      rewardCents += filed.rewardCents;
-      filedAnswers[c.slug] = a.value;
-      items.push(toItem(ingestRow(id, participantId, db)!, db));
-    }
-    const prev = db.get<{ reward_cents: number; answers_json: string | null }>('SELECT reward_cents, answers_json FROM checkin_day WHERE participant_id = ? AND date = ?', participantId, DEMO_TODAY);
-    const merged = { ...(prev?.answers_json ? (JSON.parse(prev.answers_json) as Record<string, unknown>) : {}), ...filedAnswers };
-    db.run('INSERT INTO checkin_day (participant_id, date, done, reward_cents, answers_json, created_at) VALUES (?,?,1,?,?,?) ON CONFLICT(participant_id, date) DO UPDATE SET done = 1, reward_cents = reward_cents + excluded.reward_cents, answers_json = excluded.answers_json',
-      participantId, DEMO_TODAY, rewardCents, JSON.stringify(merged), now);
-    return { filed: items.length, rewardCents, streakDays: streakDays(participantId, db), items };
-  });
+  return await db.tx(async () => {
+      const items: IngestItem[] = [];
+      let rewardCents = 0;
+      const filedAnswers: Record<string, unknown> = {};
+      for (const a of answers) {
+        const c = a && typeof a.id === 'string' ? await conceptBySlug(a.id, db) : undefined;
+        if (!c || c.level !== 'leaf' || !DAILY_PROMPTS.some((p) => p.slug === c.slug)) throw badRequest(`unknown check-in prompt ${String(a?.id)}`);
+        const built = await proposalForAnswer(db, c, a.value, now);
+        if (!built) continue;
+        const id = await insertItem(db, participantId, { kind: 'checkin', status: 'auto_filed', text: `${c.name}: ${built.text}`, proposal: built.proposal, createdAt: now });
+        const filed = await fileItem(db, participantId, id, 'checkin', built.proposal, { provenance: 'self_report', allowVariantCreate: true, classifier: 'rules', sourceText: built.text }, 'auto_filed', now);
+        rewardCents += filed.rewardCents;
+        filedAnswers[c.slug] = a.value;
+        items.push((await toItem((await ingestRow(id, participantId, db))!, db)));
+      }
+      const prev = await db.get<{ reward_cents: number; answers_json: string | null }>('SELECT reward_cents, answers_json FROM checkin_day WHERE participant_id = ? AND date = ?', participantId, DEMO_TODAY);
+      const merged = { ...(prev?.answers_json ? (JSON.parse(prev.answers_json) as Record<string, unknown>) : {}), ...filedAnswers };
+      await db.run('INSERT INTO checkin_day (participant_id, date, done, reward_cents, answers_json, created_at) VALUES (?,?,1,?,?,?) ON CONFLICT(participant_id, date) DO UPDATE SET done = 1, reward_cents = checkin_day.reward_cents + excluded.reward_cents, answers_json = excluded.answers_json',
+              participantId, DEMO_TODAY, rewardCents, JSON.stringify(merged), now);
+      return { filed: items.length, rewardCents, streakDays: await streakDays(participantId, db), items };
+    });
 }

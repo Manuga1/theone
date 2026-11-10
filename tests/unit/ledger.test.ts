@@ -23,10 +23,10 @@ describe('ledger split', () => {
 describe("Alex's ledger", () => {
   let t: TestDbs;
   let pid: number;
-  beforeAll(() => { t = seededDbs(); pid = alexId(t.graph); });
+  beforeAll(async () => { t = await seededDbs(); pid = await alexId(t.graph); });
 
-  it('seven licenses #1836–#1842 + five contribution payments = exactly $2,842.17 net', () => {
-    const l = readLedger(pid, t.graph);
+  it('seven licenses #1836–#1842 + five contribution payments = exactly $2,842.17 net', async () => {
+    const l = await readLedger(pid, t.graph);
     expect(l.lifetimeEarningsCents).toBe(284217);
     expect(l.entries.filter((e) => e.kind === 'license_fee')).toHaveLength(7);
     expect(l.entries.filter((e) => e.kind === 'contribution_payment')).toHaveLength(5);
@@ -34,26 +34,26 @@ describe("Alex's ledger", () => {
     expect(numbers).toEqual(['#1836', '#1837', '#1838', '#1839', '#1840', '#1841', '#1842']);
     for (const e of l.entries) expect(e.participantCents + e.platformCents).toBe(e.grossCents);
   });
-  it('exactly 4 licenses in term today; 7 licensed uses', () => {
-    expect(activeLicenseCount(pid, t.graph)).toBe(4);
-    expect(licensedUses(pid, t.graph)).toBe(7);
-    const l = readLedger(pid, t.graph);
+  it('exactly 4 licenses in term today; 7 licensed uses', async () => {
+    expect((await activeLicenseCount(pid, t.graph))).toBe(4);
+    expect((await licensedUses(pid, t.graph))).toBe(7);
+    const l = await readLedger(pid, t.graph);
     expect(l.activeLicenses).toBe(4);
     expect(l.entries.filter((e) => e.licenseStatus === 'active')).toHaveLength(4);
     expect(l.entries.filter((e) => e.licenseStatus === 'expired')).toHaveLength(3);
     expect(l.entries.filter((e) => e.canRevoke)).toHaveLength(4);
   });
-  it('BP license lines total $118 across 3 licenses', () => {
-    const rows = t.graph.all<{ number: number; cents: number }>(
-      `SELECT l.number, ll.cents FROM license_line ll JOIN license l ON l.id = ll.license_id JOIN concept c ON c.id = ll.concept_id
+  it('BP license lines total $118 across 3 licenses', async () => {
+    const rows = await t.graph.all<{ number: number; cents: number }>(
+          `SELECT l.number, ll.cents FROM license_line ll JOIN license l ON l.id = ll.license_id JOIN concept c ON c.id = ll.concept_id
         WHERE l.participant_id = ? AND c.slug = 'physiology.cardiovascular.blood_pressure'`, pid);
     expect(rows.reduce((a, r) => a + r.cents, 0)).toBe(11800);
     expect(new Set(rows.map((r) => r.number)).size).toBe(3);
   });
-  it('every license and every verified contribution is a ledger row', () => {
-    const licenses = t.graph.get<{ n: number }>('SELECT COUNT(*) AS n FROM license WHERE participant_id = ?', pid)!.n;
-    const verified = t.graph.get<{ n: number }>("SELECT COUNT(*) AS n FROM contribution WHERE participant_id = ? AND status = 'verified'", pid)!.n;
-    const rows = t.graph.get<{ n: number }>('SELECT COUNT(*) AS n FROM ledger_entry WHERE participant_id = ?', pid)!.n;
+  it('every license and every verified contribution is a ledger row', async () => {
+    const licenses = (await t.graph.get<{ n: number }>('SELECT COUNT(*) AS n FROM license WHERE participant_id = ?', pid))!.n;
+    const verified = (await t.graph.get<{ n: number }>("SELECT COUNT(*) AS n FROM contribution WHERE participant_id = ? AND status = 'verified'", pid))!.n;
+    const rows = (await t.graph.get<{ n: number }>('SELECT COUNT(*) AS n FROM ledger_entry WHERE participant_id = ?', pid))!.n;
     expect(rows).toBe(licenses + verified);
   });
 });

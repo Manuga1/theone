@@ -20,10 +20,10 @@ export function reuseFeeCents(c: Pick<ConceptRow, 'comp_cents' | 'reuse_comp_cen
 
 const cache = new WeakMap<Db, { version: number; rows: ConceptRow[]; bySlug: Map<string, ConceptRow>; byId: Map<number, ConceptRow>; children: Map<number | null, ConceptRow[]> }>();
 
-export function concepts(db: Db = graph()) {
+export async function concepts(db: Db = graph()) {
   const hit = cache.get(db);
-  if (hit && hit.version === db.writeVersion) return hit;
-  const rows = db.tableExists('concept') ? db.all<ConceptRow>('SELECT * FROM concept ORDER BY sort_order') : [];
+  if (hit && hit.version === (await db.version())) return hit;
+  const rows = await db.tableExists('concept') ? await db.all<ConceptRow>('SELECT * FROM concept ORDER BY sort_order') : [];
   const bySlug = new Map(rows.map((r) => [r.slug, r]));
   const byId = new Map(rows.map((r) => [r.id, r]));
   const children = new Map<number | null, ConceptRow[]>();
@@ -32,7 +32,7 @@ export function concepts(db: Db = graph()) {
     list.push(r);
     children.set(r.parent_id, list);
   }
-  const entry = { version: db.writeVersion, rows, bySlug, byId, children };
+  const entry = { version: (await db.version()), rows, bySlug, byId, children };
   cache.set(db, entry);
   return entry;
 }
@@ -44,42 +44,42 @@ export function isNewConcept(createdAt: string): boolean {
 export function invalidateConcepts(db: Db = graph()): void {
   cache.delete(db);
 }
-export function conceptBySlug(slug: string, db: Db = graph()): ConceptRow | undefined {
-  return concepts(db).bySlug.get(slug);
+export async function conceptBySlug(slug: string, db: Db = graph()): Promise<ConceptRow | undefined> {
+  return (await concepts(db)).bySlug.get(slug);
 }
-export function conceptPath(slug: string, db: Db = graph()): string[] {
-  const { bySlug, byId } = concepts(db);
+export async function conceptPath(slug: string, db: Db = graph()): Promise<string[]> {
+  const { bySlug, byId } = await concepts(db);
   const out: string[] = [];
   let c = bySlug.get(slug);
   while (c) { out.unshift(c.name); c = c.parent_id ? byId.get(c.parent_id) : undefined; }
   return out;
 }
-export function leaves(db: Db = graph()): ConceptRow[] {
-  return concepts(db).rows.filter((r) => r.level === 'leaf');
+export async function leaves(db: Db = graph()): Promise<ConceptRow[]> {
+  return (await concepts(db)).rows.filter((r) => r.level === 'leaf');
 }
 /** Variant sub-branches of a leaf (level 'variant', parent_id = the leaf). */
-export function variantsOf(leafId: number, db: Db = graph()): ConceptRow[] {
-  return (concepts(db).children.get(leafId) ?? []).filter((r) => r.level === 'variant');
+export async function variantsOf(leafId: number, db: Db = graph()): Promise<ConceptRow[]> {
+  return ((await concepts(db)).children.get(leafId) ?? []).filter((r) => r.level === 'variant');
 }
 /** The leaf itself plus its variants: observations of a leaf live on any of these concept ids. */
-export function familyIds(leaf: ConceptRow, db: Db = graph()): number[] {
-  return [leaf.id, ...variantsOf(leaf.id, db).map((v) => v.id)];
+export async function familyIds(leaf: ConceptRow, db: Db = graph()): Promise<number[]> {
+  return [leaf.id, ...(await variantsOf(leaf.id, db)).map((v) => v.id)];
 }
 /** For a variant, its leaf; for a leaf, itself. */
-export function leafOf(c: ConceptRow, db: Db = graph()): ConceptRow {
+export async function leafOf(c: ConceptRow, db: Db = graph()): Promise<ConceptRow> {
   if (c.level !== 'variant' || !c.parent_id) return c;
-  return concepts(db).byId.get(c.parent_id) ?? c;
+  return (await concepts(db)).byId.get(c.parent_id) ?? c;
 }
-export function domains(db: Db = graph()): ConceptRow[] {
-  return concepts(db).rows.filter((r) => r.level === 'domain');
+export async function domains(db: Db = graph()): Promise<ConceptRow[]> {
+  return (await concepts(db)).rows.filter((r) => r.level === 'domain');
 }
 
 export type LeafInfo = { state: NodeState; overlay: LeafOverlay; pct: number; extras?: TreeNodeExtras };
 const NO_OVERLAY: LeafOverlay = { opportunity: false, demand: false };
 
 /** Builds the domain → group → leaf tree. `leafInfo` supplies state/overlay per leaf; group/domain pct are weighted. */
-export function buildTree(leafInfo: (c: ConceptRow) => LeafInfo, db: Db = graph(), opts: { includeHidden?: boolean } = {}): TreeNode[] {
-  const { children } = concepts(db);
+export async function buildTree(leafInfo: (c: ConceptRow) => LeafInfo, db: Db = graph(), opts: { includeHidden?: boolean } = {}): Promise<TreeNode[]> {
+  const { children } = await concepts(db);
   const node = (c: ConceptRow): TreeNode => {
     const base = {
       slug: c.slug, name: c.name, level: c.level as TreeNode['level'], dataType: c.data_type ?? undefined, unit: c.unit, inRing: !!c.in_ring, inList: !!c.in_list,
@@ -103,7 +103,7 @@ export function buildTree(leafInfo: (c: ConceptRow) => LeafInfo, db: Db = graph(
 }
 
 /** Buyer-side ontology: structure + defaults only (no participant state); concepts created in the last 30 days are marked `isNew`. */
-export function ontologyResponse(db: Db = graph()): OntologyResponse {
-  const tree = buildTree((c) => ({ state: 'missing', overlay: NO_OVERLAY, pct: 0, extras: { isNew: isNewConcept(c.created_at) } }), db, { includeHidden: true });
-  return { domains: tree, conceptCount: concepts(db).rows.filter((r) => r.level !== 'variant').length };
+export async function ontologyResponse(db: Db = graph()): Promise<OntologyResponse> {
+  const tree = await buildTree((c) => ({ state: 'missing', overlay: NO_OVERLAY, pct: 0, extras: { isNew: isNewConcept(c.created_at) } }), db, { includeHidden: true });
+  return { domains: tree, conceptCount: (await concepts(db)).rows.filter((r) => r.level !== 'variant').length };
 }

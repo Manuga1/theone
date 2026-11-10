@@ -13,7 +13,7 @@ import { seededDbs, type TestDbs } from '../helpers/db';
 describe('backend fixes (scale 0.05)', () => {
   let t: TestDbs;
   let app: ReturnType<typeof createApp>;
-  beforeAll(() => { t = seededDbs(); app = createApp(); });
+  beforeAll(async () => { t = await seededDbs(); app = createApp(); });
   const bget = (url: string) => request(app).get(`/api/buyer${url}`).set({ [PERSONA_HEADER]: 'buyer:1' });
   const bpost = (url: string, body: unknown) => request(app).post(`/api/buyer${url}`).set({ [PERSONA_HEADER]: 'buyer:1' }).send(body as object);
 
@@ -33,7 +33,7 @@ describe('backend fixes (scale 0.05)', () => {
     expect(ehr.reuseCompCents).toBe(1200);
     expect(DEFAULT_CAMPAIGN_VARIABLES.find((v) => v.mode === 'reuse')!.compCents).toBe(1200);
     // a reuse variable posted with no fee gets the ontology's reuse fee (a license is never free)
-    const v = validateVariables([{ conceptSlug: 'clinical.medications.medication_list', mode: 'reuse', requirement: {}, compCents: 0, deviceCostCents: 0 }], t.graph);
+    const v = await validateVariables([{ conceptSlug: 'clinical.medications.medication_list', mode: 'reuse', requirement: {}, compCents: 0, deviceCostCents: 0 }], t.graph);
     expect(v[0].compCents).toBe(400);
   });
 
@@ -42,10 +42,10 @@ describe('backend fixes (scale 0.05)', () => {
     expect(p.barsNote).toMatch(/including data collected by running campaigns/);
   });
 
-  it('B9: missing-data group labels follow the canonical ontology order whatever order the criteria list the modalities in', () => {
+  it('B9: missing-data group labels follow the canonical ontology order whatever order the criteria list the modalities in', async () => {
     const reversed: CohortCriteria = { ...DEFAULT_CRITERIA, modalities: DEFAULT_CRITERIA.modalities.slice().reverse() };
-    const a = evaluateCohort(DEFAULT_CRITERIA, { orgId: 1, skipCache: true }, t.graph);
-    const b = evaluateCohort(reversed, { orgId: 1, skipCache: true }, t.graph);
+    const a = await evaluateCohort(DEFAULT_CRITERIA, { orgId: 1, skipCache: true }, t.graph);
+    const b = await evaluateCohort(reversed, { orgId: 1, skipCache: true }, t.graph);
     expect(a.readyNow).toBe(b.readyNow);
     const labels = (ev: typeof a) => Object.fromEntries(ev.groups.map((g) => [g.key, { label: g.label, eligible: g.eligible }]));
     expect(labels(b)).toEqual(labels(a));

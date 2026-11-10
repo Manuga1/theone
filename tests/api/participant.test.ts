@@ -8,7 +8,7 @@ import { seededDbs, alexId, type TestDbs } from '../helpers/db';
 describe('participant API', () => {
   let t: TestDbs;
   let app: ReturnType<typeof createApp>;
-  beforeAll(() => { t = seededDbs(); app = createApp(); });
+  beforeAll(async () => { t = await seededDbs(); app = createApp(); });
   const get = (url: string) => request(app).get(`/api/participant${url}`);
   const post = (url: string, body: unknown = {}) => request(app).post(`/api/participant${url}`).send(body as object);
 
@@ -30,12 +30,12 @@ describe('participant API', () => {
     expect(h.whatChanged[0].relative).toBe('2 hours ago');
     expect(h.whatChanged.find((a) => a.amountCents === 4200)?.relative).toBe('3 days ago');
   });
-  it('the demo clock reads 14:00Z (afternoon) and no seeded observation of Alex lies after it; BP row count is unchanged', () => {
+  it('the demo clock reads 14:00Z (afternoon) and no seeded observation of Alex lies after it; BP row count is unchanged', async () => {
     expect(DEMO_NOW).toBe('2026-10-24T14:00:00Z');
-    const pid = alexId(t.graph);
-    expect(t.graph.get<{ n: number }>('SELECT COUNT(*) AS n FROM observation WHERE participant_id = ? AND observed_at > ?', pid, DEMO_NOW)!.n).toBe(0);
-    expect(t.graph.get<{ n: number }>("SELECT COUNT(*) AS n FROM observation o JOIN concept c ON c.id = o.concept_id WHERE o.participant_id = ? AND c.slug = 'physiology.cardiovascular.blood_pressure' AND o.derivation IS NULL", pid)!.n).toBe(1482);
-    expect(t.graph.get<{ n: number }>("SELECT COUNT(*) AS n FROM observation o JOIN concept c ON c.id = o.concept_id WHERE o.participant_id = ? AND c.slug = 'physiology.cardiovascular.blood_pressure' AND o.derivation IS NULL AND substr(o.observed_at, 1, 10) = '2026-10-24'", pid)!.n).toBeGreaterThanOrEqual(3);
+    const pid = await alexId(t.graph);
+    expect((await t.graph.get<{ n: number }>('SELECT COUNT(*) AS n FROM observation WHERE participant_id = ? AND observed_at > ?', pid, DEMO_NOW))!.n).toBe(0);
+    expect((await t.graph.get<{ n: number }>("SELECT COUNT(*) AS n FROM observation o JOIN concept c ON c.id = o.concept_id WHERE o.participant_id = ? AND c.slug = 'physiology.cardiovascular.blood_pressure' AND o.derivation IS NULL", pid))!.n).toBe(1482);
+    expect((await t.graph.get<{ n: number }>("SELECT COUNT(*) AS n FROM observation o JOIN concept c ON c.id = o.concept_id WHERE o.participant_id = ? AND c.slug = 'physiology.cardiovascular.blood_pressure' AND o.derivation IS NULL AND substr(o.observed_at, 1, 10) = '2026-10-24'", pid))!.n).toBeGreaterThanOrEqual(3);
   });
   it('GET signature → nine domains, legend, opportunity pills on CGM and grip', async () => {
     const s = (await get('/signature').expect(200)).body as ParticipantSignature;
@@ -98,7 +98,7 @@ describe('participant API', () => {
     let home = (await get('/home')).body as ParticipantHome;
     expect(home.verifiedSources).toBe(11);
     expect(home.completeness.pct).toBeLessThan(74);
-    expect(t.graph.get<{ n: number }>('SELECT COUNT(*) AS n FROM observation WHERE source_id = ? AND deleted_at IS NOT NULL', omron.id)!.n).toBeGreaterThan(1400);
+    expect((await t.graph.get<{ n: number }>('SELECT COUNT(*) AS n FROM observation WHERE source_id = ? AND deleted_at IS NOT NULL', omron.id))!.n).toBeGreaterThan(1400);
     const re = (await post(`/sources/${omron.id}/connect`).expect(200)).body as { observations: number; synced: string[] };
     expect(re.synced).toEqual([]); // restored, not regenerated
     bp = (await get('/nodes/physiology.cardiovascular.blood_pressure')).body as NodeDetail;
@@ -125,9 +125,9 @@ describe('participant API', () => {
     const src = ((await get('/sources')).body as ParticipantSources).sources.find((x) => x.id === dexcom.id)!;
     expect(src).toMatchObject({ status: 'connected', verified: true });
     expect(((await get('/home')).body as ParticipantHome).verifiedSources).toBe(13);
-    expect(t.graph.get<{ n: number }>('SELECT COUNT(*) AS n FROM observation WHERE source_id = ? AND observed_at > ?', dexcom.id, DEMO_NOW)!.n).toBe(0);
+    expect((await t.graph.get<{ n: number }>('SELECT COUNT(*) AS n FROM observation WHERE source_id = ? AND observed_at > ?', dexcom.id, DEMO_NOW))!.n).toBe(0);
     // deterministic: the same connect on a fresh seed writes the same values
-    const first = t.graph.all<{ v: number }>('SELECT value_num AS v FROM observation WHERE source_id = ? AND derivation IS NULL ORDER BY observed_at LIMIT 5', dexcom.id).map((x) => x.v);
+    const first = (await t.graph.all<{ v: number }>('SELECT value_num AS v FROM observation WHERE source_id = ? AND derivation IS NULL ORDER BY observed_at LIMIT 5', dexcom.id)).map((x) => x.v);
     expect(first).toHaveLength(5);
     await post(`/sources/${dexcom.id}/disconnect`).expect(200);
     expect(((await get('/home')).body as ParticipantHome).verifiedSources).toBe(12);
@@ -135,7 +135,7 @@ describe('participant API', () => {
   });
   it('notify adds a demand watch; self-report makes a node partial', async () => {
     await post('/missing/physiology.metabolic.body_composition/notify').expect(200);
-    expect(t.graph.get("SELECT 1 FROM demand_watch w JOIN concept c ON c.id = w.concept_id WHERE c.slug = 'physiology.metabolic.body_composition'")).toBeTruthy();
+    expect((await t.graph.get("SELECT 1 FROM demand_watch w JOIN concept c ON c.id = w.concept_id WHERE c.slug = 'physiology.metabolic.body_composition'"))).toBeTruthy();
     await post('/missing/physiology.metabolic.body_composition/notify').expect(200); // idempotent
     await post('/missing/physiology.strength.grip_strength/self-report', { value: 42, unit: 'kg' }).expect(200);
     const grip = (await get('/nodes/physiology.strength.grip_strength')).body as NodeDetail;

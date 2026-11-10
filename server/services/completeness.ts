@@ -33,11 +33,11 @@ export type Completeness = {
   leaves: Map<string, LeafEval>;
 };
 
-export function computeCompleteness(participantId: number, asOf = DEMO_TODAY, db: Db = graph()): Completeness {
-  const cov = asOf === DEMO_TODAY ? coverageFor(participantId, db) : coverageAsOf(participantId, asOf, db);
-  const { children, rows } = concepts(db);
+export async function computeCompleteness(participantId: number, asOf = DEMO_TODAY, db: Db = graph()): Promise<Completeness> {
+  const cov = asOf === DEMO_TODAY ? await coverageFor(participantId, db) : await coverageAsOf(participantId, asOf, db);
+  const { children, rows } = await concepts(db);
   const leafMap = new Map<string, LeafEval>();
-  for (const c of leaves(db)) {
+  for (const c of await leaves(db)) {
     const r = cov.get(c.slug) ?? null;
     const { state, reason } = leafState(c, r, asOf);
     leafMap.set(c.slug, { slug: c.slug, state, score: scoreOf(state), reason, cov: r });
@@ -59,45 +59,45 @@ export function computeCompleteness(participantId: number, asOf = DEMO_TODAY, db
 }
 
 /** Overall % now and the delta vs 30 days earlier (both rounded before subtracting). */
-export function completenessSummary(participantId: number, db: Db = graph()): { pct: number; deltaMonth: number; now: Completeness } {
-  const now = computeCompleteness(participantId, DEMO_TODAY, db);
-  const before = computeCompleteness(participantId, addDays(DEMO_TODAY, -30), db);
+export async function completenessSummary(participantId: number, db: Db = graph()): Promise<{ pct: number; deltaMonth: number; now: Completeness }> {
+  const now = await computeCompleteness(participantId, DEMO_TODAY, db);
+  const before = await computeCompleteness(participantId, addDays(DEMO_TODAY, -30), db);
   return { pct: Math.round(now.overall), deltaMonth: Math.round(now.overall) - Math.round(before.overall), now };
 }
 
 const OPEN = "('offered','viewed','reviewed')";
 
 /** Overlays: `opportunity` when an open opportunity lists the leaf; `demand` when an active campaign collects it. */
-export function overlays(participantId: number, db: Db = graph()): Map<string, LeafOverlay> {
+export async function overlays(participantId: number, db: Db = graph()): Promise<Map<string, LeafOverlay>> {
   const out = new Map<string, LeafOverlay>();
   const get = (slug: string) => { let o = out.get(slug); if (!o) { o = { opportunity: false, demand: false }; out.set(slug, o); } return o; };
-  if (db.tableExists('opportunity')) {
-    for (const r of db.all<{ id: number; missing: string }>(`SELECT id, missing_concepts_json AS missing FROM opportunity WHERE participant_id = ? AND status IN ${OPEN} ORDER BY offered_at`, participantId)) {
+  if (await db.tableExists('opportunity')) {
+    for (const r of await db.all<{ id: number; missing: string }>(`SELECT id, missing_concepts_json AS missing FROM opportunity WHERE participant_id = ? AND status IN ${OPEN} ORDER BY offered_at`, participantId)) {
       for (const slug of JSON.parse(r.missing) as string[]) {
         const o = get(slug);
         if (!o.opportunity) { o.opportunity = true; o.opportunityId = r.id; }
       }
     }
-    for (const r of db.all<{ vars: string }>("SELECT variables_json AS vars FROM campaign WHERE status = 'active'")) {
+    for (const r of await db.all<{ vars: string }>("SELECT variables_json AS vars FROM campaign WHERE status = 'active'")) {
       for (const v of JSON.parse(r.vars) as { conceptSlug: string; mode: string }[]) if (v.mode !== 'reuse') get(v.conceptSlug).demand = true;
     }
   }
   return out;
 }
 
-export function signatureTree(participantId: number, db: Db = graph()): { tree: TreeNode[]; completeness: Completeness; overlays: Map<string, LeafOverlay> } {
-  const completeness = computeCompleteness(participantId, DEMO_TODAY, db);
-  const ov = overlays(participantId, db);
-  const tree = buildTree((c) => {
-    const e = completeness.leaves.get(c.slug);
-    const state = e?.state ?? 'missing';
-    const o = ov.get(c.slug) ?? { opportunity: false, demand: false };
-    const lastAt = e?.cov?.last_at ?? null;
-    return {
-      state, pct: scoreOf(state) * 100, overlay: { opportunity: state !== 'verified' && o.opportunity, demand: o.demand, opportunityId: state !== 'verified' && o.opportunity ? o.opportunityId : undefined },
-      extras: { isNew: isNewConcept(c.created_at), lastLoggedAt: lastAt, lastLoggedRelative: lastAt ? relative(lastAt) : null },
-    };
-  }, db);
+export async function signatureTree(participantId: number, db: Db = graph()): Promise<{ tree: TreeNode[]; completeness: Completeness; overlays: Map<string, LeafOverlay> }> {
+  const completeness = await computeCompleteness(participantId, DEMO_TODAY, db);
+  const ov = await overlays(participantId, db);
+  const tree = await buildTree((c) => {
+      const e = completeness.leaves.get(c.slug);
+      const state = e?.state ?? 'missing';
+      const o = ov.get(c.slug) ?? { opportunity: false, demand: false };
+      const lastAt = e?.cov?.last_at ?? null;
+      return {
+        state, pct: scoreOf(state) * 100, overlay: { opportunity: state !== 'verified' && o.opportunity, demand: o.demand, opportunityId: state !== 'verified' && o.opportunity ? o.opportunityId : undefined },
+        extras: { isNew: isNewConcept(c.created_at), lastLoggedAt: lastAt, lastLoggedRelative: lastAt ? relative(lastAt) : null },
+      };
+    }, db);
   return { tree, completeness, overlays: ov };
 }
 
@@ -109,8 +109,8 @@ export const SIGNATURE_LEGEND: ParticipantSignature['legend'] = [
   { key: 'demand', label: 'Requested by research' },
 ];
 
-export function ring(completeness: Completeness, db: Db = graph()): RingNode[] {
-  return concepts(db).rows.filter((r) => r.level === 'domain' && r.in_ring).map((d) => ({ slug: d.slug, name: ringName(d), pct: Math.round(completeness.domains.get(d.slug) ?? 0) }));
+export async function ring(completeness: Completeness, db: Db = graph()): Promise<RingNode[]> {
+  return (await concepts(db)).rows.filter((r) => r.level === 'domain' && r.in_ring).map((d) => ({ slug: d.slug, name: ringName(d), pct: Math.round(completeness.domains.get(d.slug) ?? 0) }));
 }
 function ringName(d: ConceptRow): string {
   const m = /\(([^)]+)\)/.exec(d.name);

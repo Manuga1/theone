@@ -1,6 +1,6 @@
 // Cohort engine: one pass builds a temp table `pv` of demographic matches with per-modality flags; the funnel,
 // missing-data matrix, heatmap and any-data bars are SUM(CASE …) aggregates over it. Results are cached by
-// criteria hash + db.writeVersion. The B3 funnel uses the HISTORICAL requirement branch only.
+// criteria hash + (await db.version()). The B3 funnel uses the HISTORICAL requirement branch only.
 import { performance } from 'node:perf_hooks';
 import { DEMO_TODAY } from '@shared/clock';
 import { CohortCriteria as CriteriaSchema, type CohortCriteria } from '@shared/criteria';
@@ -11,6 +11,7 @@ import { graph } from '../db/graph';
 import type { Db } from '../db/driver';
 import { criteriaHash } from './cohort-hash';
 import { estimatedAfter, type GroupInput } from './estimate';
+import { mapSeq } from '../util/async';
 
 export type CohortOptions = {
   orgId: number;
@@ -61,8 +62,8 @@ export function invalidateCohortCache(db: Db = graph()): void {
   caches.delete(db);
 }
 
-export function orgConsent(orgId: number, db: Db = graph()): { blocked: boolean; reason: string | null; type: string; name: string } {
-  const org = db.tableExists('buyer_org') ? db.get<{ name: string; type: string; declared_uses_json: string }>('SELECT name, type, declared_uses_json FROM buyer_org WHERE id = ?', orgId) : undefined;
+export async function orgConsent(orgId: number, db: Db = graph()): Promise<{ blocked: boolean; reason: string | null; type: string; name: string }> {
+  const org = await db.tableExists('buyer_org') ? await db.get<{ name: string; type: string; declared_uses_json: string }>('SELECT name, type, declared_uses_json FROM buyer_org WHERE id = ?', orgId) : undefined;
   if (!org) return { blocked: false, reason: null, type: 'other', name: '' };
   const uses = JSON.parse(org.declared_uses_json) as string[];
   const hit = uses.filter((u) => PROHIBITED_USE_KEYS.includes(u));
@@ -71,9 +72,9 @@ export function orgConsent(orgId: number, db: Db = graph()): { blocked: boolean;
     : { blocked: false, reason: null, type: org.type, name: org.name };
 }
 
-export function evaluateCohort(rawCriteria: CohortCriteria, opts: CohortOptions, db: Db = graph()): Evaluation {
+export async function evaluateCohort(rawCriteria: CohortCriteria, opts: CohortOptions, db: Db = graph()): Promise<Evaluation> {
   const criteria = CriteriaSchema.parse(rawCriteria);
-  const key = criteriaHash(criteria, { orgId: opts.orgId, variables: opts.variables ?? null, study: opts.openOpportunityStudyId ?? null, campaign: opts.openOpportunityCampaignId ?? null }) + ':' + db.writeVersion;
+  const key = criteriaHash(criteria, { orgId: opts.orgId, variables: opts.variables ?? null, study: opts.openOpportunityStudyId ?? null, campaign: opts.openOpportunityCampaignId ?? null }) + ':' + (await db.version());
   let cache = caches.get(db);
   if (!cache) { cache = new Map(); caches.set(db, cache); }
   if (!opts.skipCache) {
@@ -81,19 +82,19 @@ export function evaluateCohort(rawCriteria: CohortCriteria, opts: CohortOptions,
     if (hit) return hit;
   }
   const t0 = performance.now();
-  const ev = compute(criteria, opts, db);
+  const ev = await db.tx(async () => await compute(criteria, opts, db));
   ev.timingMs = Math.round((performance.now() - t0) * 10) / 10;
   if (cache.size > 64) cache.delete(cache.keys().next().value!);
   cache.set(key, ev);
   return ev;
 }
 
-function compute(c: CohortCriteria, opts: CohortOptions, db: Db): Evaluation {
-  const consent = orgConsent(opts.orgId, db);
-  const ready = db.tableExists('participant') && db.tableExists('concept');
-  const conceptRows = ready ? db.all<ConceptRow>('SELECT id, slug, name, enrichable, sort_order FROM concept') : [];
+async function compute(c: CohortCriteria, opts: CohortOptions, db: Db): Promise<Evaluation> {
+  const consent = await orgConsent(opts.orgId, db);
+  const ready = await db.tableExists('participant') && await db.tableExists('concept');
+  const conceptRows = ready ? await db.all<ConceptRow>('SELECT id, slug, name, enrichable, sort_order FROM concept') : [];
   const concepts = new Map(conceptRows.map((r) => [r.slug, r]));
-  const total = ready ? (db.get<{ n: number }>('SELECT COUNT(*) AS n FROM participant')?.n ?? 0) : 0;
+  const total = ready ? ((await db.get<{ n: number }>('SELECT COUNT(*) AS n FROM participant'))?.n ?? 0) : 0;
 
   // ---- specs: the modalities we evaluate (criteria modalities, or campaign variables) ----
   const modSpecs: Spec[] = c.modalities.filter((m) => concepts.has(m.slug)).map((m) => {
@@ -135,11 +136,11 @@ function compute(c: CohortCriteria, opts: CohortOptions, db: Db): Evaluation {
   };
   const histExpr = (s: Spec) => {
     wanted.add(s.id);
-    return register(`h:${s.id}:${s.minSpanDays}:${s.minProvRank}`, 'MAX(CASE WHEN cv.concept_id = ? AND cv.span_days >= ? AND cv.best_prov_rank >= ? THEN 1 ELSE 0 END)', [s.id, s.minSpanDays, s.minProvRank]);
+    return register(`h:${s.id}:${s.minSpanDays}:${s.minProvRank}`, '(MAX(CASE WHEN cv.concept_id = ? AND cv.span_days >= ? AND cv.best_prov_rank >= ? THEN 1 ELSE 0 END) = 1)', [s.id, s.minSpanDays, s.minProvRank]);
   };
   const anyExpr = (id: number) => {
     wanted.add(id);
-    return register(`a:${id}`, 'MAX(CASE WHEN cv.concept_id = ? THEN 1 ELSE 0 END)', [id]);
+    return register(`a:${id}`, '(MAX(CASE WHEN cv.concept_id = ? THEN 1 ELSE 0 END) = 1)', [id]);
   };
   // NOTE: per-participant predicates come first in the SQL text, so their params are pushed first.
   const condExprs = c.conditions.filter((s) => concepts.has(s)).map((s) => {
@@ -155,20 +156,20 @@ function compute(c: CohortCriteria, opts: CohortOptions, db: Db): Evaluation {
     params.push(opts.openOpportunityCampaignId);
     openParts.push('EXISTS (SELECT 1 FROM opportunity op WHERE op.participant_id = p.id AND op.campaign_id = ?)');
   }
-  const openOpp = openParts.length ? `(${openParts.join(' OR ')})` : '0';
+  const openOpp = openParts.length ? `(${openParts.join(' OR ')})` : 'FALSE';
   const outer: string[] = [];
   modSpecs.forEach((s, i) => outer.push(`${histExpr(s)} AS m${i}`));
   if (varSpecs) varSpecs.forEach((s, i) => outer.push(`${histExpr(s)} AS v${i}`));
   HEATMAP_COLUMNS.forEach((h, i) => {
     const ms = modSpecs.find((s) => s.slug === h.slug);
     const k = concepts.get(h.slug);
-    outer.push(`${ms ? histExpr(ms) : k ? anyExpr(k.id) : '0'} AS h${i}`);
-    outer.push(`${k ? anyExpr(k.id) : '0'} AS a${i}`);
+    outer.push(`${ms ? histExpr(ms) : k ? anyExpr(k.id) : 'FALSE'} AS h${i}`);
+    outer.push(`${k ? anyExpr(k.id) : 'FALSE'} AS a${i}`);
   });
   const labAliases = c.labs.filter((l) => concepts.has(l.slug)).map((l) => {
     const id = concepts.get(l.slug)!.id;
     wanted.add(id);
-    return register(`l:${id}:${l.op}:${l.value}`, `MAX(CASE WHEN cv.concept_id = ? AND cv.last_value_num ${l.op} ? THEN 1 ELSE 0 END)`, [id, l.value]);
+    return register(`l:${id}:${l.op}:${l.value}`, `(MAX(CASE WHEN cv.concept_id = ? AND cv.last_value_num ${l.op} ? THEN 1 ELSE 0 END) = 1)`, [id, l.value]);
   });
   params.push(...exprParams);
   const inList = Array.from(wanted);
@@ -182,33 +183,34 @@ function compute(c: CohortCriteria, opts: CohortOptions, db: Db): Evaluation {
   if (d.sex && d.sex !== 'any') { params.push(d.sex); where.push('p.sex = ?'); }
   if (c.requireRecontact) where.push('cs.recontact_opt_in = 1 AND COALESCE(cs.vault_only, 0) = 0');
 
-  // Participant is scanned in rowid order (NOT INDEXED): the consent/coverage joins then read sequentially and the
-  // GROUP BY needs no temp B-tree. A full scan of the participant table is ~15 ms at full scale.
+  // One GROUP BY pass over participant ⋈ consent ⋈ (the wanted) coverage rows. Every flag is a boolean column.
   // Vault-only participants (2026-11-10 notes) are never recontactable: they drop out of every consent-gated figure.
   const inner = `SELECT p.id AS pid, ${VAULT_AWARE_RECONTACT} AS recontact, COALESCE(cs.commercial_ok, 1) AS commercial, COALESCE(cs.excluded_categories_json, '[]') AS excl,
-      ${condExprs.length ? `(${condExprs.join(' AND ')})` : '1'} AS cond_ok, ${openOpp} AS open_opp${exprs.length ? ', ' + exprs.join(', ') : ''}
-    FROM participant p NOT INDEXED
+      ${condExprs.length ? `(${condExprs.join(' AND ')})` : 'TRUE'} AS cond_ok, ${openOpp} AS open_opp${exprs.length ? ', ' + exprs.join(', ') : ''}
+    FROM participant p
     LEFT JOIN consent_setting cs ON cs.participant_id = p.id
     LEFT JOIN participant_coverage cv ON cv.participant_id = p.id AND cv.n_obs > 0 AND cv.concept_id IN (${inList.map(() => '?').join(', ') || 'NULL'})
     ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-    GROUP BY p.id`;
+    GROUP BY p.id, cs.participant_id`;
   const baseExpr = ['cond_ok', ...labAliases].join(' AND ');
-  const sel = `SELECT pid, recontact, commercial, excl, open_opp, (${baseExpr}) AS base${outer.length ? ', ' + outer.join(', ') : ''} FROM (${inner})`;
-  db.exec('DROP TABLE IF EXISTS temp.pv');
-  db.run(`CREATE TEMP TABLE pv AS ${sel}`, ...params);
+  const sel = `SELECT pid, recontact, commercial, excl, open_opp, (${baseExpr}) AS base${outer.length ? ', ' + outer.join(', ') : ''} FROM (${inner}) t`;
+  // pv lives for the enclosing transaction only (compute always runs inside one: see evaluateCohort), so it works the
+  // same through Supabase's transaction-mode pooler, where consecutive transactions may land on different connections.
+  await db.exec('DROP TABLE IF EXISTS pg_temp.pv');
+  await db.run(`CREATE TEMP TABLE pv ON COMMIT DROP AS ${sel}`, ...params);
 
   // ---- funnel ----
   const prefix = (n: number) => ['base', ...modSpecs.slice(0, n).map((_, i) => `m${i}`)].join(' AND ');
   const allM = prefix(modSpecs.length);
   const sums = [
     'COUNT(*) AS demo',
-    'SUM(base) AS base_n',
+    'SUM(CASE WHEN base THEN 1 ELSE 0 END) AS base_n',
     ...modSpecs.map((_, i) => `SUM(CASE WHEN ${prefix(i + 1)} THEN 1 ELSE 0 END) AS f${i}`),
     `SUM(CASE WHEN ${allM} AND recontact = 1 THEN 1 ELSE 0 END) AS ready_recontact`,
     'SUM(CASE WHEN base AND recontact = 1 THEN 1 ELSE 0 END) AS recontact_base',
     ...HEATMAP_COLUMNS.map((_, i) => `SUM(CASE WHEN base AND a${i} THEN 1 ELSE 0 END) AS bar${i}`),
   ];
-  const agg = db.get<Record<string, number>>(`SELECT ${sums.join(', ')} FROM pv`)!;
+  const agg = (await db.get<Record<string, number>>(`SELECT ${sums.join(', ')} FROM pv`))!;
   const funnelN = [total, agg.demo ?? 0, agg.base_n ?? 0, ...modSpecs.map((_, i) => agg[`f${i}`] ?? 0)];
   const funnel: FunnelStage[] = funnelN.map((n, i) => ({ key: i === 0 ? 'total' : i === 1 ? 'demographics' : i === 2 ? 'conditions' : modSpecs[i - 3].slug, label: funnelLabels[i], n: n ?? 0 }));
   const readyNow = funnelN[funnelN.length - 1] ?? 0;
@@ -216,9 +218,9 @@ function compute(c: CohortCriteria, opts: CohortOptions, db: Db): Evaluation {
 
   // ---- recruitable predicate ----
   const requiredDomains = Array.from(new Set(groupSpecs.map((s) => domainOf(s.slug))));
-  const exclOk = requiredDomains.length ? requiredDomains.map((dm) => `instr(excl, '"${dm}"') = 0`).join(' AND ') : '1';
-  const commercialOk = consent.type === 'academic' ? '1' : 'commercial = 1';
-  const recruitable = `(recontact = 1 AND ${exclOk} AND ${commercialOk} AND open_opp = 0)`;
+  const exclOk = requiredDomains.length ? requiredDomains.map((dm) => `instr(excl, '"${dm}"') = 0`).join(' AND ') : 'TRUE';
+  const commercialOk = consent.type === 'academic' ? 'TRUE' : 'commercial = 1';
+  const recruitable = `(recontact = 1 AND ${exclOk} AND ${commercialOk} AND NOT open_opp)`;
 
   // ---- missing-data matrix: groups keyed by the set of (enrichable) specs that must be collected ----
   const flag = (s: Spec, i: number) => (varSpecs ? `v${i}` : `m${i}`);
@@ -226,8 +228,8 @@ function compute(c: CohortCriteria, opts: CohortOptions, db: Db): Evaluation {
   const collectExpr = groupSpecs.map((s, i) => (s.mustHave ? "''" : s.alwaysCollect ? `'${i},'` : `(CASE WHEN ${flag(s, i)} THEN '' ELSE '${i},' END)`)).join(' || ');
   const groupWhere = ['base', ...mustHave].join(' AND ');
   const groupRows = groupSpecs.length
-    ? db.all<{ gkey: string; eligible: number; recruitable: number }>(
-        `SELECT gkey, COUNT(*) AS eligible, SUM(CASE WHEN ${recruitable} THEN 1 ELSE 0 END) AS recruitable
+    ? await db.all<{ gkey: string; eligible: number; recruitable: number }>(
+              `SELECT gkey, COUNT(*) AS eligible, SUM(CASE WHEN ${recruitable} THEN 1 ELSE 0 END) AS recruitable
            FROM (SELECT ${collectExpr} AS gkey, recontact, excl, commercial, open_opp FROM pv WHERE ${groupWhere}) g
           WHERE gkey <> '' GROUP BY gkey`)
     : [];
@@ -240,27 +242,26 @@ function compute(c: CohortCriteria, opts: CohortOptions, db: Db): Evaluation {
   });
   groups.sort((a, b) => a.slugs.length - b.slugs.length || b.eligible - a.eligible);
 
-  const notRecruitable = groupSpecs
+  const notRecruitable = await mapSeq(groupSpecs
     .map((s, i) => ({ s, i }))
-    .filter(({ s }) => s.mustHave)
-    .map(({ s, i }) => ({
+    .filter(({ s }) => s.mustHave), async ({ s, i }) => ({
       label: `Not recruitable — requires history: ${shortName(s.slug)}${s.minSpanDays ? ` ≥ ${spanLabel(s.minSpanDays)}` : ''}`,
-      n: db.get<{ n: number }>(`SELECT SUM(CASE WHEN base AND NOT ${flag(s, i)} THEN 1 ELSE 0 END) AS n FROM pv`)?.n ?? 0,
+      n: (await db.get<{ n: number }>(`SELECT SUM(CASE WHEN base AND NOT ${flag(s, i)} THEN 1 ELSE 0 END) AS n FROM pv`))?.n ?? 0,
     }));
 
   // ---- heatmap rows: complete cohort + the first three groups ----
   const cellSums = HEATMAP_COLUMNS.map((_, i) => `SUM(CASE WHEN h${i} THEN 1 ELSE 0 END) AS c${i}`).join(', ');
-  const rowFor = (label: string, cond: string): { label: string; n: number; cells: HeatCell[] } => {
-    const r = db.get<Record<string, number>>(`SELECT COUNT(*) AS n, ${cellSums} FROM pv WHERE ${cond}`)!;
+  const rowFor = async (label: string, cond: string): Promise<{ label: string; n: number; cells: HeatCell[] }> => {
+    const r = (await db.get<Record<string, number>>(`SELECT COUNT(*) AS n, ${cellSums} FROM pv WHERE ${cond}`))!;
     const n = r.n ?? 0;
     return { label, n, cells: HEATMAP_COLUMNS.map((_, i) => cell(n ? (r[`c${i}`] ?? 0) / n : 0)) };
   };
-  const heatRows = [rowFor('Complete cohort', allM)];
+  const heatRows = [await rowFor('Complete cohort', allM)];
   const groupCond = (g: GroupInput) => {
     const key = g.slugs.map((s) => groupSpecs.findIndex((x) => x.slug === s)).sort((a, b) => a - b).map((i) => `${i},`).join('');
     return `${groupWhere} AND (${collectExpr}) = '${key}'`;
   };
-  groups.slice(0, 3).forEach((g, i) => heatRows.push(rowFor(`Group ${'ABC'[i]} — ${g.label}`, groupCond(g))));
+  for (const [i, g] of groups.slice(0, 3).entries()) heatRows.push(await rowFor(`Group ${'ABC'[i]} — ${g.label}`, groupCond(g)));
 
   const bars = HEATMAP_COLUMNS.map((h, i) => ({ slug: h.slug, label: h.label, pct: baseN ? Math.round(((agg[`bar${i}`] ?? 0) / baseN) * 1000) / 10 : 0 }));
 
@@ -274,17 +275,20 @@ function compute(c: CohortCriteria, opts: CohortOptions, db: Db): Evaluation {
 /**
  * The recruitable pool for a campaign: every base member that must collect at least one variable and passes the
  * recruitable predicate, with the slugs to collect. Runs an uncached evaluation and reads `pv` in the same
- * synchronous block (the temp table is connection-global). Members with nothing to collect are excluded.
+ * transaction (the temp table is dropped at commit). Members with nothing to collect are excluded.
  */
-export function recruitablePool(criteria: CohortCriteria, opts: CohortOptions, db: Db = graph()): { ev: Evaluation; members: PoolMember[]; ready: ReadyMember[] } {
-  const ev = evaluateCohort(criteria, { ...opts, skipCache: true }, db);
+export async function recruitablePool(criteria: CohortCriteria, opts: CohortOptions, db: Db = graph()): Promise<{ ev: Evaluation; members: PoolMember[]; ready: ReadyMember[] }> {
+  return await db.tx(async () => await recruitablePoolTx(criteria, opts, db));
+}
+async function recruitablePoolTx(criteria: CohortCriteria, opts: CohortOptions, db: Db): Promise<{ ev: Evaluation; members: PoolMember[]; ready: ReadyMember[] }> {
+  const ev = await evaluateCohort(criteria, { ...opts, skipCache: true }, db);
   if (!ev.poolSql) return { ev, members: [], ready: [] };
   const { where, collectExpr, specs } = ev.poolSql;
-  const rows = db.all<{ pid: number; gkey: string }>(`SELECT pid, (${collectExpr}) AS gkey FROM pv WHERE ${where} AND (${collectExpr}) <> '' ORDER BY pid`);
+  const rows = await db.all<{ pid: number; gkey: string }>(`SELECT pid, (${collectExpr}) AS gkey FROM pv WHERE ${where} AND (${collectExpr}) <> '' ORDER BY pid`);
   const members = rows.map((r) => ({ pid: r.pid, slugs: r.gkey.split(',').filter(Boolean).map((i) => specs[Number(i)].slug) }));
   // ready-now: nothing to collect (every variable satisfied historically) but still recruitable → reuse-only license offer
-  const ready = db.all<{ pid: number; pre: number }>(
-    `SELECT pv.pid, COALESCE(cs.preauthorize_reuse_only, 0) AS pre FROM pv LEFT JOIN consent_setting cs ON cs.participant_id = pv.pid WHERE ${where} AND (${collectExpr}) = '' ORDER BY pv.pid`)
+  const ready = (await db.all<{ pid: number; pre: number }>(
+      `SELECT pv.pid, COALESCE(cs.preauthorize_reuse_only, 0) AS pre FROM pv LEFT JOIN consent_setting cs ON cs.participant_id = pv.pid WHERE ${where} AND (${collectExpr}) = '' ORDER BY pv.pid`))
     .map((r) => ({ pid: r.pid, preauthorized: r.pre === 1 }));
   return { ev, members, ready };
 }
@@ -323,8 +327,8 @@ export function groupLabel(slugs: string[]): string {
 }
 
 /** Buyer-facing preview with the k-anonymity floor applied (counts 1–19 are reported as 19 → rendered "<20"). */
-export function previewFor(criteria: CohortCriteria, orgId: number, db: Db = graph()): CohortPreview {
-  const ev = evaluateCohort(criteria, { orgId }, db);
+export async function previewFor(criteria: CohortCriteria, orgId: number, db: Db = graph()): Promise<CohortPreview> {
+  const ev = await evaluateCohort(criteria, { orgId }, db);
   const after = estimatedAfter(ev.readyNow, ev.groups);
   const groups: MissingGroup[] = ev.groups.map((g) => ({ key: g.key, label: g.label, conceptSlugs: g.slugs, eligible: kfloorN(g.eligible), recruitable: kfloorN(g.recruitable) }));
   return {

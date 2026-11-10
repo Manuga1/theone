@@ -118,32 +118,32 @@ const STUDIES: StudySpec[] = [
     variables: [v('clinical.labs.lipid_panel', 'reuse', 'Lipid panel', 2500, hist(365, 4)), v('clinical.labs.hba1c', 'reuse', 'HbA1c', 1700, hist(365, 4))] },
 ];
 
-export function seedAlexMarketplace(ctx: SeedCtx, w: AlexWriter, S: AlexSources): void {
+export async function seedAlexMarketplace(ctx: SeedCtx, w: AlexWriter, S: AlexSources): Promise<void> {
   const db = ctx.graph;
   const now = nowIso();
   const pid = w.pid;
 
-  db.tx(() => {
-    for (const o of ORGS) ctx.orgs[o.key] = insert(db, 'buyer_org', { name: o.name, type: o.type, declared_uses_json: JSON.stringify(o.uses), created_at: now });
+  await db.tx(async () => {
+        for (const o of ORGS) ctx.orgs[o.key] = await insert(db, 'buyer_org', { name: o.name, type: o.type, declared_uses_json: JSON.stringify(o.uses), created_at: now });
 
-    for (const s of STUDIES) {
-      let cohortId: number | null = null;
-      if (s.criteria) {
-        cohortId = insert(db, 'cohort_definition', { buyer_org_id: ctx.orgs[s.org], name: s.cohortName ?? s.name, criteria_json: JSON.stringify(s.criteria), criteria_hash: criteriaHash(s.criteria), created_at: s.launchedAt ? `${s.launchedAt}T09:00:00Z` : now });
-      }
-      const studyId = insert(db, 'study', {
-        buyer_org_id: ctx.orgs[s.org], cohort_definition_id: cohortId, name: s.name, purpose: s.purpose, use_tags_json: JSON.stringify(s.useTags),
-        license_term_months: s.termMonths, target_n: s.targetN, salt: `salt-${s.key}-${ctx.rng.fork(`salt:${s.key}`).int(1e6, 9e6)}`, status: s.studyStatus,
-        updated_at: now, created_at: s.launchedAt ? `${s.launchedAt}T09:00:00Z` : now,
+        for (const s of STUDIES) {
+          let cohortId: number | null = null;
+          if (s.criteria) {
+            cohortId = await insert(db, 'cohort_definition', { buyer_org_id: ctx.orgs[s.org], name: s.cohortName ?? s.name, criteria_json: JSON.stringify(s.criteria), criteria_hash: criteriaHash(s.criteria), created_at: s.launchedAt ? `${s.launchedAt}T09:00:00Z` : now });
+          }
+          const studyId = await insert(db, 'study', {
+                  buyer_org_id: ctx.orgs[s.org], cohort_definition_id: cohortId, name: s.name, purpose: s.purpose, use_tags_json: JSON.stringify(s.useTags),
+                  license_term_months: s.termMonths, target_n: s.targetN, salt: `salt-${s.key}-${ctx.rng.fork(`salt:${s.key}`).int(1e6, 9e6)}`, status: s.studyStatus,
+                  updated_at: now, created_at: s.launchedAt ? `${s.launchedAt}T09:00:00Z` : now,
+                });
+          ctx.studies[s.key] = studyId;
+          ctx.campaigns[s.key] = await insert(db, 'campaign', {
+                  study_id: studyId, parent_campaign_id: null, name: s.name, status: s.campaignStatus, target_complete_n: s.targetN, eligible_n: 0,
+                  variables_json: JSON.stringify(s.variables), estimate_json: null, launched_at: s.launchedAt, closed_at: s.campaignStatus === 'closed' ? addMonths(s.launchedAt!, 3) : null,
+                  created_at: s.launchedAt ? `${s.launchedAt}T09:00:00Z` : now,
+                });
+        }
       });
-      ctx.studies[s.key] = studyId;
-      ctx.campaigns[s.key] = insert(db, 'campaign', {
-        study_id: studyId, parent_campaign_id: null, name: s.name, status: s.campaignStatus, target_complete_n: s.targetN, eligible_n: 0,
-        variables_json: JSON.stringify(s.variables), estimate_json: null, launched_at: s.launchedAt, closed_at: s.campaignStatus === 'closed' ? addMonths(s.launchedAt!, 3) : null,
-        created_at: s.launchedAt ? `${s.launchedAt}T09:00:00Z` : now,
-      });
-    }
-  });
 
   const spec = (key: string) => STUDIES.find((s) => s.key === key)!;
   const collectSlugs = (s: StudySpec) => s.variables.filter((x) => x.mode !== 'reuse').map((x) => x.conceptSlug);
@@ -151,16 +151,16 @@ export function seedAlexMarketplace(ctx: SeedCtx, w: AlexWriter, S: AlexSources)
   const totalComp = (s: StudySpec) => s.variables.reduce((a, x) => a + x.compCents, 0);
 
   // ---- four available opportunities (offered, untouched) ----
-  db.tx(() => {
-    const offer = (key: string, offeredAt: string) => insert(db, 'opportunity', {
-      campaign_id: ctx.campaigns[key], participant_id: pid, status: 'offered', missing_concepts_json: JSON.stringify(collectSlugs(spec(key))),
-      comp_max_cents: totalComp(spec(key)), offered_at: offeredAt, created_at: offeredAt,
-    });
-    offer('metabolic', '2026-02-12T09:00:00Z');
-    offer('glucose', '2026-03-04T09:00:00Z');
-    offer('cardio', '2026-06-03T09:00:00Z');
-    offer('adherence', '2026-09-22T09:00:00Z');
-  });
+  await db.tx(async () => {
+        const offer = async (key: string, offeredAt: string) => await insert(db, 'opportunity', {
+              campaign_id: ctx.campaigns[key], participant_id: pid, status: 'offered', missing_concepts_json: JSON.stringify(collectSlugs(spec(key))),
+              comp_max_cents: totalComp(spec(key)), offered_at: offeredAt, created_at: offeredAt,
+            });
+        await offer('metabolic', '2026-02-12T09:00:00Z');
+        await offer('glucose', '2026-03-04T09:00:00Z');
+        await offer('cardio', '2026-06-03T09:00:00Z');
+        await offer('adherence', '2026-09-22T09:00:00Z');
+      });
 
   // ---- past enrollments: opportunity → consent → enrollment → license (+ lines, ledger) → contribution (+ ledger) ----
   type Past = { key: string; offered: string; accepted: string; completed: string; licenseNo: number; licenseNet: number; lines: [string, number][]; contribution: { slug: string; method: string; days: number; net: number } };
@@ -182,106 +182,106 @@ export function seedAlexMarketplace(ctx: SeedCtx, w: AlexWriter, S: AlexSources)
       contribution: { slug: 'outcomes.patient_reported.quality_of_life', method: 'survey', days: 1, net: 24367 } },
   ];
 
-  const mintLicense = (key: string, no: number, net: number, termStart: string, lines: [string, number][], grantId: number | null, enrollmentId: number | null, purpose: string) => {
+  const mintLicense = async (key: string, no: number, net: number, termStart: string, lines: [string, number][], grantId: number | null, enrollmentId: number | null, purpose: string) => {
     const s = spec(key);
     const lineSum = lines.reduce((a, [, c]) => a + c, 0);
     if (lineSum !== net) throw new Error(`license ${no}: lines ${lineSum} != net ${net}`);
     const termEnd = addMonths(termStart, s.termMonths);
     const { gross, participant, platform } = fromNet(net);
-    const licenseId = insert(db, 'license', {
-      number: no, study_id: ctx.studies[key], buyer_org_id: ctx.orgs[s.org], participant_id: pid, consent_grant_id: grantId, enrollment_id: enrollmentId,
-      scope_concepts_json: JSON.stringify(lines.map(([slug]) => slug)), purpose, term_start: termStart, term_end: termEnd,
-      gross_cents: gross, participant_cents: participant, platform_cents: platform, revoked_at: null, created_at: `${termStart}T10:00:00Z`,
-    });
-    for (const [slug, cents] of lines) insert(db, 'license_line', { license_id: licenseId, concept_id: concept(ctx, slug), cents, created_at: `${termStart}T10:00:00Z` });
-    if (grantId) appendAudit(db, { participantId: pid, kind: 'consent_granted', refTable: 'consent_grant', refId: grantId, at: `${termStart}T10:00:00Z`, summary: `Consent granted: ${s.name} (${scopeSlugs(s).length} variables, ${s.termMonths}-month term, identity withheld)`,
-      payload: { studyId: ctx.studies[key], scope: scopeSlugs(s), withheld: ['identity'], termMonths: s.termMonths, reuseAllowed: false, recontactViaPlatform: true } });
-    appendAudit(db, { participantId: pid, kind: 'license_created', refTable: 'license', refId: licenseId, at: `${termStart}T10:00:00Z`, summary: `Research License #${no} minted — ${s.name} (${termStart} → ${termEnd}, $${(participant / 100).toFixed(2)} net)`,
-      payload: { number: no, studyId: ctx.studies[key], buyerOrgId: ctx.orgs[s.org], scope: lines.map(([slug]) => slug), termStart, termEnd, grossCents: gross, participantCents: participant, platformCents: platform } });
-    postLedger(db, { participantId: pid, kind: 'license_fee', netCents: net, occurredAt: `${termStart}T10:00:00Z`, studyId: ctx.studies[key], licenseId, memo: `Research License #${no} — ${s.name}` });
-    w.event(termStart, 'license', 'research', `Research License #${no}`, `${s.name} (${ORGS.find((o) => o.key === s.org)!.name})`, null);
+    const licenseId = await insert(db, 'license', {
+          number: no, study_id: ctx.studies[key], buyer_org_id: ctx.orgs[s.org], participant_id: pid, consent_grant_id: grantId, enrollment_id: enrollmentId,
+          scope_concepts_json: JSON.stringify(lines.map(([slug]) => slug)), purpose, term_start: termStart, term_end: termEnd,
+          gross_cents: gross, participant_cents: participant, platform_cents: platform, revoked_at: null, created_at: `${termStart}T10:00:00Z`,
+        });
+    for (const [slug, cents] of lines) await insert(db, 'license_line', { license_id: licenseId, concept_id: concept(ctx, slug), cents, created_at: `${termStart}T10:00:00Z` });
+    if (grantId) await appendAudit(db, { participantId: pid, kind: 'consent_granted', refTable: 'consent_grant', refId: grantId, at: `${termStart}T10:00:00Z`, summary: `Consent granted: ${s.name} (${scopeSlugs(s).length} variables, ${s.termMonths}-month term, identity withheld)`,
+          payload: { studyId: ctx.studies[key], scope: scopeSlugs(s), withheld: ['identity'], termMonths: s.termMonths, reuseAllowed: false, recontactViaPlatform: true } });
+    await appendAudit(db, { participantId: pid, kind: 'license_created', refTable: 'license', refId: licenseId, at: `${termStart}T10:00:00Z`, summary: `Research License #${no} minted — ${s.name} (${termStart} → ${termEnd}, $${(participant / 100).toFixed(2)} net)`,
+            payload: { number: no, studyId: ctx.studies[key], buyerOrgId: ctx.orgs[s.org], scope: lines.map(([slug]) => slug), termStart, termEnd, grossCents: gross, participantCents: participant, platformCents: platform } });
+    await postLedger(db, { participantId: pid, kind: 'license_fee', netCents: net, occurredAt: `${termStart}T10:00:00Z`, studyId: ctx.studies[key], licenseId, memo: `Research License #${no} — ${s.name}` });
+    await w.event(termStart, 'license', 'research', `Research License #${no}`, `${s.name} (${ORGS.find((o) => o.key === s.org)!.name})`, null);
     return licenseId;
   };
 
-  db.tx(() => {
-    for (const p of past) {
-      const s = spec(p.key);
-      const oppId = insert(db, 'opportunity', {
-        campaign_id: ctx.campaigns[p.key], participant_id: pid, status: 'paid', missing_concepts_json: JSON.stringify(collectSlugs(s)), comp_max_cents: p.licenseNet + p.contribution.net,
-        offered_at: `${p.offered}T09:00:00Z`, viewed_at: `${p.offered}T18:00:00Z`, reviewed_at: `${p.accepted}T09:30:00Z`, responded_at: `${p.accepted}T09:45:00Z`, completed_at: `${p.completed}T12:00:00Z`, created_at: `${p.offered}T09:00:00Z`,
+  await db.tx(async () => {
+        for (const p of past) {
+          const s = spec(p.key);
+          const oppId = await insert(db, 'opportunity', {
+                  campaign_id: ctx.campaigns[p.key], participant_id: pid, status: 'paid', missing_concepts_json: JSON.stringify(collectSlugs(s)), comp_max_cents: p.licenseNet + p.contribution.net,
+                  offered_at: `${p.offered}T09:00:00Z`, viewed_at: `${p.offered}T18:00:00Z`, reviewed_at: `${p.accepted}T09:30:00Z`, responded_at: `${p.accepted}T09:45:00Z`, completed_at: `${p.completed}T12:00:00Z`, created_at: `${p.offered}T09:00:00Z`,
+                });
+          const grantId = await insert(db, 'consent_grant', {
+                  participant_id: pid, study_id: ctx.studies[p.key], opportunity_id: oppId, scope_concepts_json: JSON.stringify(scopeSlugs(s)), withheld_json: '["identity"]', purpose: s.purpose,
+                  term_months: s.termMonths, reuse_allowed: 0, recontact_via_platform: 1, granted_at: `${p.accepted}T09:45:00Z`, revoked_at: null, created_at: `${p.accepted}T09:45:00Z`,
+                });
+          const enrollmentId = await insert(db, 'enrollment', {
+                  participant_id: pid, study_id: ctx.studies[p.key], campaign_id: ctx.campaigns[p.key], opportunity_id: oppId, consent_grant_id: grantId, status: 'completed',
+                  enrolled_at: `${p.accepted}T09:45:00Z`, completed_at: `${p.completed}T12:00:00Z`, withdrawn_at: null, created_at: `${p.accepted}T09:45:00Z`,
+                });
+          await mintLicense(p.key, p.licenseNo, p.licenseNet, p.accepted, p.lines, grantId, enrollmentId, s.purpose);
+          const contributionId = await insert(db, 'contribution', {
+                  opportunity_id: oppId, participant_id: pid, concept_id: concept(ctx, p.contribution.slug), status: 'verified', method: p.contribution.method, duration_days: p.contribution.days,
+                  comp_cents: p.contribution.net, artifact_id: null, observation_count: p.contribution.method === 'survey' ? 1 : p.contribution.days * (p.contribution.method === 'device' ? 4 : 1),
+                  submitted_at: `${p.completed}T11:00:00Z`, verified_at: `${p.completed}T12:00:00Z`, created_at: `${p.accepted}T09:45:00Z`,
+                });
+          await postLedger(db, { participantId: pid, kind: 'contribution_payment', netCents: p.contribution.net, occurredAt: `${p.completed}T12:00:00Z`, studyId: ctx.studies[p.key], contributionId, memo: `${s.name} — ${s.variables.find((x) => x.conceptSlug === p.contribution.slug && x.mode !== 'reuse')?.label ?? 'contribution'}` });
+          await w.event(p.completed, 'contribution', 'research', `Completed: ${s.name}`, `Verified contribution paid`, p.contribution.slug);
+          // protocol-grade observations produced by past contributions
+          if (p.key === 'bpvar') await db.run('UPDATE observation SET contribution_id = ? WHERE participant_id = ? AND contribution_id = -1', contributionId, pid);
+          if (p.key === 'sleepmeta') await db.run("UPDATE observation SET contribution_id = ?, provenance_class = 'protocol_measurement', method = 'protocol' WHERE participant_id = ? AND concept_id = ? AND observed_at >= '2025-03-01' AND observed_at < '2025-03-15'", contributionId, pid, concept(ctx, 'physiology.sleep.sleep_duration'));
+          if (p.key === 'aging') await w.obs({ slug: 'outcomes.patient_reported.quality_of_life', at: '2026-02-15', num: 72, json: { instrument: 'SF-12', physical: 48, mental: 51 }, source: S.surveys, method: 'survey', prov: 'protocol_measurement', contribution: contributionId });
+          if (p.key === 'registry') await w.obs({ slug: 'outcomes.patient_reported.symptom_survey', at: '2024-12-02', num: 2, json: { instrument: 'registry', score: 2 }, source: S.surveys, method: 'survey', prov: 'protocol_measurement', contribution: contributionId });
+          if (p.key === 'htnout') await w.obs({ slug: 'outcomes.patient_reported.symptom_survey', at: '2025-07-22', num: 3, json: { instrument: 'symptoms', score: 3 }, source: S.surveys, method: 'survey', prov: 'protocol_measurement', contribution: contributionId });
+        }
       });
-      const grantId = insert(db, 'consent_grant', {
-        participant_id: pid, study_id: ctx.studies[p.key], opportunity_id: oppId, scope_concepts_json: JSON.stringify(scopeSlugs(s)), withheld_json: '["identity"]', purpose: s.purpose,
-        term_months: s.termMonths, reuse_allowed: 0, recontact_via_platform: 1, granted_at: `${p.accepted}T09:45:00Z`, revoked_at: null, created_at: `${p.accepted}T09:45:00Z`,
-      });
-      const enrollmentId = insert(db, 'enrollment', {
-        participant_id: pid, study_id: ctx.studies[p.key], campaign_id: ctx.campaigns[p.key], opportunity_id: oppId, consent_grant_id: grantId, status: 'completed',
-        enrolled_at: `${p.accepted}T09:45:00Z`, completed_at: `${p.completed}T12:00:00Z`, withdrawn_at: null, created_at: `${p.accepted}T09:45:00Z`,
-      });
-      mintLicense(p.key, p.licenseNo, p.licenseNet, p.accepted, p.lines, grantId, enrollmentId, s.purpose);
-      const contributionId = insert(db, 'contribution', {
-        opportunity_id: oppId, participant_id: pid, concept_id: concept(ctx, p.contribution.slug), status: 'verified', method: p.contribution.method, duration_days: p.contribution.days,
-        comp_cents: p.contribution.net, artifact_id: null, observation_count: p.contribution.method === 'survey' ? 1 : p.contribution.days * (p.contribution.method === 'device' ? 4 : 1),
-        submitted_at: `${p.completed}T11:00:00Z`, verified_at: `${p.completed}T12:00:00Z`, created_at: `${p.accepted}T09:45:00Z`,
-      });
-      postLedger(db, { participantId: pid, kind: 'contribution_payment', netCents: p.contribution.net, occurredAt: `${p.completed}T12:00:00Z`, studyId: ctx.studies[p.key], contributionId, memo: `${s.name} — ${s.variables.find((x) => x.conceptSlug === p.contribution.slug && x.mode !== 'reuse')?.label ?? 'contribution'}` });
-      w.event(p.completed, 'contribution', 'research', `Completed: ${s.name}`, `Verified contribution paid`, p.contribution.slug);
-      // protocol-grade observations produced by past contributions
-      if (p.key === 'bpvar') db.run('UPDATE observation SET contribution_id = ? WHERE participant_id = ? AND contribution_id = -1', contributionId, pid);
-      if (p.key === 'sleepmeta') db.run("UPDATE observation SET contribution_id = ?, provenance_class = 'protocol_measurement', method = 'protocol' WHERE participant_id = ? AND concept_id = ? AND observed_at >= '2025-03-01' AND observed_at < '2025-03-15'", contributionId, pid, concept(ctx, 'physiology.sleep.sleep_duration'));
-      if (p.key === 'aging') w.obs({ slug: 'outcomes.patient_reported.quality_of_life', at: '2026-02-15', num: 72, json: { instrument: 'SF-12', physical: 48, mental: 51 }, source: S.surveys, method: 'survey', prov: 'protocol_measurement', contribution: contributionId });
-      if (p.key === 'registry') w.obs({ slug: 'outcomes.patient_reported.symptom_survey', at: '2024-12-02', num: 2, json: { instrument: 'registry', score: 2 }, source: S.surveys, method: 'survey', prov: 'protocol_measurement', contribution: contributionId });
-      if (p.key === 'htnout') w.obs({ slug: 'outcomes.patient_reported.symptom_survey', at: '2025-07-22', num: 3, json: { instrument: 'symptoms', score: 3 }, source: S.surveys, method: 'survey', prov: 'protocol_measurement', contribution: contributionId });
-    }
-  });
 
   // ---- in-progress: Wearable Sleep Study (license #1841 minted at accept; diary pending, questionnaires submitted) ----
-  db.tx(() => {
-    const s = spec('wearsleep');
-    const oppId = insert(db, 'opportunity', {
-      campaign_id: ctx.campaigns.wearsleep, participant_id: pid, status: 'in_progress', missing_concepts_json: JSON.stringify(collectSlugs(s)), comp_max_cents: 11800 + 9000,
-      offered_at: '2026-07-01T09:00:00Z', viewed_at: '2026-07-01T19:00:00Z', reviewed_at: '2026-07-08T08:30:00Z', responded_at: '2026-07-08T08:40:00Z', completed_at: null, created_at: '2026-07-01T09:00:00Z',
-    });
-    const grantId = insert(db, 'consent_grant', {
-      participant_id: pid, study_id: ctx.studies.wearsleep, opportunity_id: oppId, scope_concepts_json: JSON.stringify(scopeSlugs(s)), withheld_json: '["identity"]', purpose: s.purpose,
-      term_months: s.termMonths, reuse_allowed: 0, recontact_via_platform: 1, granted_at: '2026-07-08T08:40:00Z', revoked_at: null, created_at: '2026-07-08T08:40:00Z',
-    });
-    const enrollmentId = insert(db, 'enrollment', {
-      participant_id: pid, study_id: ctx.studies.wearsleep, campaign_id: ctx.campaigns.wearsleep, opportunity_id: oppId, consent_grant_id: grantId, status: 'active',
-      enrolled_at: '2026-07-08T08:40:00Z', completed_at: null, withdrawn_at: null, created_at: '2026-07-08T08:40:00Z',
-    });
-    mintLicense('wearsleep', 1841, 11800, '2026-07-08', [['physiology.sleep.sleep_duration', 5000], ['physiology.sleep.sleep_stages', 2800], ['physiology.cardiovascular.blood_pressure', 4000]], grantId, enrollmentId, s.purpose);
-    insert(db, 'contribution', { opportunity_id: oppId, participant_id: pid, concept_id: concept(ctx, 'physiology.sleep.sleep_duration'), status: 'pending', method: 'protocol', duration_days: 14, comp_cents: 6000, artifact_id: null, observation_count: 0, submitted_at: null, verified_at: null, created_at: '2026-07-08T08:40:00Z' });
-    const q = insert(db, 'contribution', { opportunity_id: oppId, participant_id: pid, concept_id: concept(ctx, 'behavior.stress.stress_survey'), status: 'submitted', method: 'survey', duration_days: 1, comp_cents: 3000, artifact_id: null, observation_count: 6, submitted_at: '2026-10-10T18:00:00Z', verified_at: null, created_at: '2026-07-08T08:40:00Z' });
-    // questionnaires completed under the study protocol (rank 3)
-    w.obs({ slug: 'behavior.stress.stress_survey', at: '2026-10-10', num: 14, json: { instrument: 'PSS-10', score: 14 }, source: S.surveys, method: 'survey', prov: 'protocol_measurement', contribution: q });
-    w.obs({ slug: 'outcomes.patient_reported.quality_of_life', at: '2026-10-10', num: 76, json: { instrument: 'SF-12', physical: 50, mental: 53 }, source: S.surveys, method: 'survey', prov: 'protocol_measurement', contribution: q });
-    for (const d of ['2026-01-15', '2026-04-15', '2026-07-15', '2026-10-10']) {
-      w.obs({ slug: 'outcomes.patient_reported.symptom_survey', at: d, num: d === '2026-10-10' ? 1 : 2, json: { instrument: 'symptoms', score: d === '2026-10-10' ? 1 : 2 }, source: S.surveys, method: 'survey', prov: 'protocol_measurement', contribution: d === '2026-10-10' ? q : null });
-    }
-    w.event('2026-07-08', 'enrollment', 'research', 'Enrolled: Wearable Sleep Study', 'Academic Research · 12-month license · sleep diary pending', 'physiology.sleep.sleep_duration');
-  });
+  await db.tx(async () => {
+        const s = spec('wearsleep');
+        const oppId = await insert(db, 'opportunity', {
+              campaign_id: ctx.campaigns.wearsleep, participant_id: pid, status: 'in_progress', missing_concepts_json: JSON.stringify(collectSlugs(s)), comp_max_cents: 11800 + 9000,
+              offered_at: '2026-07-01T09:00:00Z', viewed_at: '2026-07-01T19:00:00Z', reviewed_at: '2026-07-08T08:30:00Z', responded_at: '2026-07-08T08:40:00Z', completed_at: null, created_at: '2026-07-01T09:00:00Z',
+            });
+        const grantId = await insert(db, 'consent_grant', {
+              participant_id: pid, study_id: ctx.studies.wearsleep, opportunity_id: oppId, scope_concepts_json: JSON.stringify(scopeSlugs(s)), withheld_json: '["identity"]', purpose: s.purpose,
+              term_months: s.termMonths, reuse_allowed: 0, recontact_via_platform: 1, granted_at: '2026-07-08T08:40:00Z', revoked_at: null, created_at: '2026-07-08T08:40:00Z',
+            });
+        const enrollmentId = await insert(db, 'enrollment', {
+              participant_id: pid, study_id: ctx.studies.wearsleep, campaign_id: ctx.campaigns.wearsleep, opportunity_id: oppId, consent_grant_id: grantId, status: 'active',
+              enrolled_at: '2026-07-08T08:40:00Z', completed_at: null, withdrawn_at: null, created_at: '2026-07-08T08:40:00Z',
+            });
+        await mintLicense('wearsleep', 1841, 11800, '2026-07-08', [['physiology.sleep.sleep_duration', 5000], ['physiology.sleep.sleep_stages', 2800], ['physiology.cardiovascular.blood_pressure', 4000]], grantId, enrollmentId, s.purpose);
+        await insert(db, 'contribution', { opportunity_id: oppId, participant_id: pid, concept_id: concept(ctx, 'physiology.sleep.sleep_duration'), status: 'pending', method: 'protocol', duration_days: 14, comp_cents: 6000, artifact_id: null, observation_count: 0, submitted_at: null, verified_at: null, created_at: '2026-07-08T08:40:00Z' });
+        const q = await insert(db, 'contribution', { opportunity_id: oppId, participant_id: pid, concept_id: concept(ctx, 'behavior.stress.stress_survey'), status: 'submitted', method: 'survey', duration_days: 1, comp_cents: 3000, artifact_id: null, observation_count: 6, submitted_at: '2026-10-10T18:00:00Z', verified_at: null, created_at: '2026-07-08T08:40:00Z' });
+        // questionnaires completed under the study protocol (rank 3)
+        await w.obs({ slug: 'behavior.stress.stress_survey', at: '2026-10-10', num: 14, json: { instrument: 'PSS-10', score: 14 }, source: S.surveys, method: 'survey', prov: 'protocol_measurement', contribution: q });
+        await w.obs({ slug: 'outcomes.patient_reported.quality_of_life', at: '2026-10-10', num: 76, json: { instrument: 'SF-12', physical: 50, mental: 53 }, source: S.surveys, method: 'survey', prov: 'protocol_measurement', contribution: q });
+        for (const d of ['2026-01-15', '2026-04-15', '2026-07-15', '2026-10-10']) {
+          await w.obs({ slug: 'outcomes.patient_reported.symptom_survey', at: d, num: d === '2026-10-10' ? 1 : 2, json: { instrument: 'symptoms', score: d === '2026-10-10' ? 1 : 2 }, source: S.surveys, method: 'survey', prov: 'protocol_measurement', contribution: d === '2026-10-10' ? q : null });
+        }
+        await w.event('2026-07-08', 'enrollment', 'research', 'Enrolled: Wearable Sleep Study', 'Academic Research · 12-month license · sleep diary pending', 'physiology.sleep.sleep_duration');
+      });
 
   // ---- reuse-only license #1842 (pre-authorised reuse; no opportunity) ----
-  db.tx(() => {
-    const s = spec('lipid');
-    const grantId = insert(db, 'consent_grant', {
-      participant_id: pid, study_id: ctx.studies.lipid, opportunity_id: null, scope_concepts_json: JSON.stringify(scopeSlugs(s)), withheld_json: '["identity"]', purpose: s.purpose,
-      term_months: s.termMonths, reuse_allowed: 0, recontact_via_platform: 1, granted_at: '2026-10-21T10:00:00Z', revoked_at: null, created_at: '2026-10-21T10:00:00Z',
-    });
-    mintLicense('lipid', 1842, 4200, '2026-10-21', [['clinical.labs.lipid_panel', 2500], ['clinical.labs.hba1c', 1700]], grantId, null, s.purpose);
-  });
+  await db.tx(async () => {
+        const s = spec('lipid');
+        const grantId = await insert(db, 'consent_grant', {
+              participant_id: pid, study_id: ctx.studies.lipid, opportunity_id: null, scope_concepts_json: JSON.stringify(scopeSlugs(s)), withheld_json: '["identity"]', purpose: s.purpose,
+              term_months: s.termMonths, reuse_allowed: 0, recontact_via_platform: 1, granted_at: '2026-10-21T10:00:00Z', revoked_at: null, created_at: '2026-10-21T10:00:00Z',
+            });
+        await mintLicense('lipid', 1842, 4200, '2026-10-21', [['clinical.labs.lipid_panel', 2500], ['clinical.labs.hba1c', 1700]], grantId, null, s.purpose);
+      });
 
   // ---- buyer-side activity ----
-  db.tx(() => {
-    const act = (org: string, at: string, kind: string, text: string) => insert(db, 'activity', { participant_id: null, buyer_org_id: ctx.orgs[org], kind, text, amount_cents: null, occurred_at: at, created_at: now });
-    act('biopharma', hoursAgo(2), 'cohort_updated', 'Type 2 diabetes cohort updated');
-    act('biopharma', '2026-10-23T08:00:00Z', 'campaign', 'Nutrition collection campaign — 7 new completions');
-    act('biopharma', '2026-10-22T09:00:00Z', 'dataset', 'New dataset version available');
-    act('pharma', '2026-10-21T10:00:00Z', 'license', 'Longitudinal Lipid Study: 1 new reuse license');
-    act('pharma', '2026-10-19T10:00:00Z', 'campaign', 'Glucose Response Cohort recruiting');
-    act('academic', '2026-10-10T18:00:00Z', 'campaign', 'Wearable Sleep Study: quarterly questionnaires received');
-    act('adtarget', '2026-10-20T10:00:00Z', 'blocked', 'Cohort request blocked by participant red-lines');
-  });
+  await db.tx(async () => {
+        const act = async (org: string, at: string, kind: string, text: string) => await insert(db, 'activity', { participant_id: null, buyer_org_id: ctx.orgs[org], kind, text, amount_cents: null, occurred_at: at, created_at: now });
+        await act('biopharma', hoursAgo(2), 'cohort_updated', 'Type 2 diabetes cohort updated');
+        await act('biopharma', '2026-10-23T08:00:00Z', 'campaign', 'Nutrition collection campaign — 7 new completions');
+        await act('biopharma', '2026-10-22T09:00:00Z', 'dataset', 'New dataset version available');
+        await act('pharma', '2026-10-21T10:00:00Z', 'license', 'Longitudinal Lipid Study: 1 new reuse license');
+        await act('pharma', '2026-10-19T10:00:00Z', 'campaign', 'Glucose Response Cohort recruiting');
+        await act('academic', '2026-10-10T18:00:00Z', 'campaign', 'Wearable Sleep Study: quarterly questionnaires received');
+        await act('adtarget', '2026-10-20T10:00:00Z', 'blocked', 'Cohort request blocked by participant red-lines');
+      });
 }
 
