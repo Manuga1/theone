@@ -2,12 +2,12 @@
 //   verified: data exists ∧ best_prov_rank ≥ 2 ∧ span ≥ min_span_days ∧ fresh
 //   partial:  a row exists but one test fails (e.g. self-report only, stale, too short)
 //   missing:  nothing on record
-import { DEMO_TODAY, daysBetween, addDays } from '@shared/clock';
+import { DEMO_TODAY, daysBetween, addDays, relative } from '@shared/clock';
 import type { LeafOverlay, NodeState, ParticipantSignature, RingNode, TreeNode } from '@shared/api-types';
 import { graph } from '../db/graph';
 import type { Db } from '../db/driver';
 import { coverageAsOf, coverageFor, type CoverageRow } from './coverage';
-import { buildTree, concepts, leaves, type ConceptRow } from './ontology';
+import { buildTree, concepts, isNewConcept, leaves, type ConceptRow } from './ontology';
 
 export type LeafEval = { slug: string; state: NodeState; score: number; reason: string | null; cov: CoverageRow | null };
 
@@ -92,7 +92,11 @@ export function signatureTree(participantId: number, db: Db = graph()): { tree: 
     const e = completeness.leaves.get(c.slug);
     const state = e?.state ?? 'missing';
     const o = ov.get(c.slug) ?? { opportunity: false, demand: false };
-    return { state, pct: scoreOf(state) * 100, overlay: { opportunity: state !== 'verified' && o.opportunity, demand: o.demand, opportunityId: state !== 'verified' && o.opportunity ? o.opportunityId : undefined } };
+    const lastAt = e?.cov?.last_at ?? null;
+    return {
+      state, pct: scoreOf(state) * 100, overlay: { opportunity: state !== 'verified' && o.opportunity, demand: o.demand, opportunityId: state !== 'verified' && o.opportunity ? o.opportunityId : undefined },
+      extras: { isNew: isNewConcept(c.created_at), lastLoggedAt: lastAt, lastLoggedRelative: lastAt ? relative(lastAt) : null },
+    };
   }, db);
   return { tree, completeness, overlays: ov };
 }

@@ -63,6 +63,9 @@ await build({
   logLevel: 'warning',
 });
 writeFileSync(path.join(funcDir, 'package.json'), JSON.stringify({ type: 'module' }));
+// graph()/vault() run the idempotent migration on open and read the schema files next to the module (server/db/migrate.ts
+// resolves them relative to its own directory, which is the function directory inside the bundle).
+for (const f of ['schema.sql', 'vault-schema.sql']) cpSync(path.join(root, 'server', 'db', f), path.join(funcDir, f));
 writeFileSync(
   path.join(funcDir, '.vc-config.json'),
   JSON.stringify({ runtime: 'nodejs22.x', handler: 'index.mjs', launcherType: 'Nodejs', shouldAddHelpers: false, maxDuration: 60, memory: 1024 }, null, 2),

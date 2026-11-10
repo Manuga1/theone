@@ -4,7 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowRight } from 'lucide-react';
 import type { ParticipantSignature, TreeNode } from '@shared/api-types';
 import { useApi } from '../hooks';
-import { Card, ConceptTree, ErrorBox, Pill, StatePill, Pct, domainStyle } from '../components';
+import { Card, ConceptTree, ErrorBox, Pill, StatePill, Pct, domainStyle, ValueKindGlyph, VALUE_KIND_LABEL } from '../components';
 
 function findNode(domains: TreeNode[], slug: string): TreeNode | null {
   for (const d of domains) {
@@ -43,7 +43,7 @@ export default function SignaturePage() {
 
   if (q.error) return <ErrorBox error={q.error} />;
   return (
-    <div className="grid grid--aside-main gap-16" style={{ gridTemplateColumns: '440px minmax(0, 1fr)' }}>
+    <div className="grid grid--aside-main-440 gap-16">
       <Card title="Your Health Signature" sub="Click any category to explore your data, see completeness, and find opportunities.">
         {q.data ? (
           <ConceptTree
@@ -61,7 +61,7 @@ export default function SignaturePage() {
         {focus ? (
           <Card
             title={<span className="row gap-8">{(() => { const s = domainStyle(focus.slug); const I = s.icon; return <span className="ctree__domain-icon" style={{ background: s.soft, color: s.color }}><I /></span>; })()}{focus.name}</span>}
-            sub={focus.level === 'domain' ? 'Domain' : focus.level === 'group' ? 'Group' : 'Variable'}
+            sub={<span className="row gap-6">{focus.level === 'domain' ? 'Domain' : focus.level === 'group' ? 'Group' : 'Variable'}{focus.valueKind && <><ValueKindGlyph kind={focus.valueKind} /> {VALUE_KIND_LABEL[focus.valueKind]}</>}{focus.isNew && <span className="pill pill--new pill--sm">new</span>}</span>}
             right={<span className="row gap-6"><StatePill state={focus.state} />{focus.overlay.opportunity && <Pill variant="opportunity" />}{focus.overlay.demand && <Pill variant="demand" icon>Requested</Pill>}</span>}
           >
             <div className="row gap-16" style={{ alignItems: 'baseline' }}>
@@ -75,6 +75,8 @@ export default function SignaturePage() {
                 <div><span className="k">Missing</span><span className="v">{stats.missing}</span></div>
                 <div><span className="k">Opportunities</span><span className="v">{stats.opp}</span></div>
                 <div><span className="k">Requested by research</span><span className="v">{stats.demand}</span></div>
+                {focus.lastLoggedRelative && <div><span className="k">Last logged</span><span className="v">{focus.lastLoggedRelative}</span></div>}
+                {focus.variantCount !== undefined && focus.variantCount > 0 && <div><span className="k">Sub-branches</span><span className="v">{focus.variantCount}</span></div>}
               </div>
             )}
             {(focus.level === 'leaf' || focus.children.length === 0) && (
@@ -97,6 +99,7 @@ export default function SignaturePage() {
             <p><strong>Verified</strong> means the value came straight from a clinical system or a connected device and spans long enough to be useful. <strong>Partial</strong> data is self-reported or too short; <strong>missing</strong> dimensions have no data yet.</p>
             <p>Every node you complete makes you eligible for more studies. <Pill variant="opportunity" sm /> marks variables an open study will pay you to collect; <Pill variant="demand" sm>$</Pill> marks variables an active campaign is requesting right now.</p>
             <p>Verification is provenance, not a diagnosis: the platform records where each value came from and never scores your health.</p>
+            <p>Glyphs show each variable's data type (continuous, number, yes/no, text, updatable fact, category, file, photo). <span className="pill pill--new pill--sm">new</span> marks branches created in the last 30 days — including sub-branches the classifier opened for a new brand, drink or activity you logged.</p>
           </div>
         </Card>
       </div>

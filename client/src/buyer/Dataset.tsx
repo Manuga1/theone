@@ -1,8 +1,8 @@
 // B8 Dataset Access: variables table + six tabs, Analyze in workspace, Request approved export, Request additional variable.
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { Download, FlaskConical, PlusCircle, RefreshCw } from 'lucide-react';
-import type { Dataset, DatasetTab } from '@shared/api-types';
+import { Download, FlaskConical, PlusCircle, RefreshCw, Bot, ListChecks } from 'lucide-react';
+import type { Dataset, DatasetTab, ClassifierName } from '@shared/api-types';
 import { PROVENANCE_LABEL } from '@shared/provenance';
 import { dateLong } from '@shared/fmt';
 import { api } from '../api';
@@ -14,6 +14,24 @@ const TABS: { key: DatasetTab; label: string }[] = [
   { key: 'variables', label: 'Variables' }, { key: 'documentation', label: 'Documentation' }, { key: 'provenance', label: 'Provenance' },
   { key: 'missingness', label: 'Missingness' }, { key: 'longitudinal', label: 'Longitudinal' }, { key: 'ontology', label: 'Ontology' },
 ];
+/**
+ * Additive (proposed for shared/api-types, Dataset.provenance[n]): share of a variable's rows filed by the ingestion
+ * classifier (quick logs, uploads, check-ins) and their mean confidence. Read defensively until the contract carries it.
+ */
+type ProvenanceRow = Dataset['provenance'][number] & { classified?: { pct: number; meanConfidence: number | null; classifier?: ClassifierName | null; n?: number } | null };
+
+function ClassifierShare({ c }: { c: NonNullable<ProvenanceRow['classified']> }) {
+  const claude = c.classifier === 'claude';
+  return (
+    <div className="classified mt-8" data-testid="classifier-share">
+      {claude ? <Bot /> : <ListChecks />}
+      <span><strong>{Math.round(c.pct)}%</strong> filed by the {claude ? 'Claude' : 'rule'} classifier{typeof c.n === 'number' ? ` (${c.n.toLocaleString('en-US')} rows)` : ''}</span>
+      <span className="faint">·</span>
+      <span>mean confidence {c.meanConfidence === null ? '—' : `${Math.round(c.meanConfidence * 100)}%`}</span>
+    </div>
+  );
+}
+
 const TYPE_VARIANT: Record<Dataset['variables'][number]['type'], 'neutral' | 'accent' | 'purple' | 'dark'> = { Structured: 'neutral', 'Time series': 'accent', 'File/variants': 'purple', DICOM: 'dark' };
 
 export default function DatasetPage() {
@@ -69,13 +87,21 @@ export default function DatasetPage() {
           )}
           {!stale && tab === 'provenance' && (
             <div className="col gap-12">
-              {d.provenance.map((v) => (
+              {(d.provenance as ProvenanceRow[]).map((v) => (
                 <div key={v.slug}>
                   <div className="h3 mb-8">{v.label}</div>
                   <div className="col gap-6">{v.classes.map((c) => <BarRow key={c.cls} label={PROVENANCE_LABEL[c.cls]} value={c.pct} labelWidth={150} tone={c.cls === 'self_report' ? 'amber' : 'green'} />)}</div>
+                  {v.classified && v.classified.pct > 0 ? <ClassifierShare c={v.classified} /> : null}
                 </div>
               ))}
               {d.provenance.length === 0 && <div className="rail__empty">No provenance breakdown.</div>}
+              {d.provenance.length > 0 && (d.provenance as ProvenanceRow[]).some((v) => v.classified) && (
+                <div className="note">
+                  {(d.provenance as ProvenanceRow[]).some((v) => v.classified && v.classified.pct > 0)
+                    ? "Classifier-filed rows come from participants' quick logs, uploads and check-ins; the confidence is the classifier's own score at filing time (rows below the review threshold were confirmed by the participant)."
+                    : 'No rows in this dataset were filed by the ingestion classifier yet: classifier-filed data comes from quick logs, uploads and check-ins, and the share with its mean confidence appears here per variable once members log that way.'}
+                </div>
+              )}
             </div>
           )}
           {!stale && tab === 'missingness' && (

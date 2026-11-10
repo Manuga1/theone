@@ -3,13 +3,13 @@
 // there, forward-only). Completions auto-bump the version. Every number is a query over dataset_member ⋈ coverage.
 import { nowIso } from '@shared/clock';
 import { PROVENANCE_CLASSES, type ProvenanceClass } from '@shared/provenance';
-import type { Dataset, DatasetSummary, DatasetTab, DatasetVariable, TreeNode, Workspace } from '@shared/api-types';
+import type { ClassifierName, Dataset, DatasetSummary, DatasetTab, DatasetVariable, TreeNode, Workspace } from '@shared/api-types';
 import { graph } from '../db/graph';
 import type { Db } from '../db/driver';
 import { badRequest, notFound } from '../errors';
 import { logActivity } from './activity';
 import { kfloorN } from './cohort';
-import { buildTree, conceptBySlug, type ConceptRow } from './ontology';
+import { buildTree, conceptBySlug, familyIds, type ConceptRow } from './ontology';
 import { makeSalt, scopedPseudonym } from './pseudonym';
 import { STARTED_STATUSES, sqlList } from './state';
 
@@ -179,7 +179,7 @@ export function datasetDetail(orgId: number, id: number, tab: DatasetTab | undef
       for (const r of rows) byClass.set(RANK_CLASS[r.r] ?? 'self_report', (byClass.get(RANK_CLASS[r.r] ?? 'self_report') ?? 0) + r.n);
       for (const cls of PROVENANCE_CLASSES) classes.push({ cls, pct: n ? Math.round(((byClass.get(cls) ?? 0) / n) * 1000) / 10 : 0 });
     }
-    return { slug: v.slug, label: datasetLabel(v.concept), classes };
+    return { slug: v.slug, label: datasetLabel(v.concept), classes, classified: classifiedShare(d, v.concept, db) };
   }) : [];
 
   const missingness = want('missingness') ? vars.map((v) => {
@@ -219,6 +219,21 @@ export function datasetDetail(orgId: number, id: number, tab: DatasetTab | undef
     rowLevelN: kfloorN(rowLevel), summaryOnlyN: kfloorN(total - rowLevel),
     variables, documentation, provenance, missingness, longitudinal, ontology, exportRequests,
   };
+}
+
+/**
+ * Classifier provenance (2026-11-10 notes): among the dataset members' live observations of a variable (the leaf and its
+ * sub-branches), the share filed by the ingestion pipeline (observation.classification_json) and their mean confidence.
+ */
+function classifiedShare(d: Pick<DatasetRow, 'id'>, c: ConceptRow, db: Db): { pct: number; meanConfidence: number | null; classifier: ClassifierName | null } {
+  const r = db.get<{ total: number; n: number; mean: number | null; claude: number }>(
+    `SELECT COUNT(*) AS total, COUNT(o.classification_json) AS n, AVG(json_extract(o.classification_json, '$.confidence')) AS mean,
+            SUM(CASE WHEN json_extract(o.classification_json, '$.classifier') = 'claude' THEN 1 ELSE 0 END) AS claude
+       FROM dataset_member dm JOIN observation o ON o.participant_id = dm.participant_id AND o.deleted_at IS NULL AND o.derivation IS NULL
+       WHERE dm.dataset_id = ? AND o.concept_id IN (${familyIds(c, db).map(() => '?').join(', ')})`, d.id, ...familyIds(c, db));
+  const total = r?.total ?? 0;
+  const n = r?.n ?? 0;
+  return { pct: total ? Math.round((n / total) * 1000) / 10 : 0, meanConfidence: n && r?.mean !== null && r?.mean !== undefined ? Math.round(r.mean * 100) / 100 : null, classifier: n ? ((r?.claude ?? 0) * 2 > n ? 'claude' : 'rules') : null };
 }
 
 function pruneTree(tree: TreeNode[], keep: Set<string>): TreeNode[] {

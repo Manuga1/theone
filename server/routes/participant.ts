@@ -20,7 +20,17 @@ import { acceptOpportunity, declineOpportunity, reviewOpportunity, viewOpportuni
 import { deleteCategory, revokeLicense, withdrawEnrollment } from '../services/governance';
 import { simulateContribution } from '../services/simulate';
 import { licenseNumber } from '../services/ledger';
-import type { AcceptResult, SimulateResult, CategoryDeleteResult } from '@shared/api-types';
+import type { AcceptResult, SimulateResult, CategoryDeleteResult, AppleHealthImportResult, IngestQueue, QuickLogInput, QuickLogResult, ReviewAction, ReviewResult, UploadFileInput, UploadResult } from '@shared/api-types';
+import { inboxCounts, ingestQueue, reviewItem, uploadFiles } from '../services/ingest';
+import { quickLog } from '../services/quicklog';
+import { importAppleHealth } from '../services/appleHealth';
+import { classifierName } from '../services/classify';
+import type { AuditLog, AuditVerify, CheckIn, CheckInInput, CheckInResult, LoggingRewards, OnboardingInput, OnboardingState } from '@shared/api-types';
+import { auditLog, verifyChain } from '../services/audit';
+import { getCheckIn, submitCheckIn } from '../services/checkin';
+import { isVaultOnly } from '../services/consent';
+import { advanceOnboarding, onboardingState, type IdentityView } from '../services/onboarding';
+import { loggingRewards, rewardsToday } from '../services/rewards';
 
 export const participantRouter = Router();
 
@@ -41,6 +51,9 @@ function identity(participantId: number): IdentityRow | undefined {
 const ok = (): Ok => ({ ok: true, writeVersion: graph().writeVersion });
 const wrap = (fn: (req: Request, res: Response) => void) => (req: Request, res: Response, next: NextFunction) => {
   try { fn(req, res); } catch (e) { next(e); }
+};
+const wrapAsync = (fn: (req: Request, res: Response) => Promise<void>) => (req: Request, res: Response, next: NextFunction) => {
+  fn(req, res).catch(next);
 };
 
 const EMPTY_HOME: ParticipantHome = {
@@ -63,7 +76,58 @@ participantRouter.get('/home', wrap((_req, res) => {
     opportunities: availableSummary(p.id, db),
     ring: ring(c.now, db),
     whatChanged: participantActivity(p.id, 6, db),
+    // 2026-11-10 notes: inbox, vault mode, onboarding flag, today's check-in and logging rewards
+    inbox: inboxCounts(p.id, db),
+    vaultOnly: isVaultOnly(p.id, db),
+    onboardingCompleted: !!db.get<{ o: string | null }>('SELECT onboarded_at AS o FROM participant WHERE id = ?', p.id)?.o,
+    checkIn: (() => { const c = getCheckIn(p.id, db); return { done: c.done, promptCount: c.prompts.length, streakDays: c.streakDays }; })(),
+    rewardsToday: rewardsToday(p.id, db),
   };
+  res.json(body);
+}));
+
+// ---- 2026-11-10 notes: logging rewards, daily check-in, onboarding, the audit chain ----
+const EMPTY_REWARDS: LoggingRewards = { enabled: false, disabledReason: 'No participant data — run `npm run seed`.', rules: [], todayCents: 0, weekCents: 0, streakDays: 0 };
+participantRouter.get('/rewards', wrap((_req, res) => {
+  const p = detailed();
+  const body: LoggingRewards = p ? loggingRewards(p.id) : EMPTY_REWARDS;
+  res.json(body);
+}));
+participantRouter.get('/checkin', wrap((_req, res) => {
+  const p = detailed();
+  const body: CheckIn = p ? getCheckIn(p.id) : { date: DEMO_TODAY, done: false, prompts: [], streakDays: 0, rewardCents: 0 };
+  res.json(body);
+}));
+participantRouter.post('/checkin', wrap((req, res) => {
+  const p = detailed();
+  if (!p) throw notFound('participant');
+  const body: CheckInResult = submitCheckIn(p.id, (req.body ?? {}) as CheckInInput);
+  res.json(body);
+}));
+const identityView = (participantId: number): IdentityView | undefined => {
+  const id = identity(participantId);
+  return id ? { legalName: id.legal_name, email: id.email, dob: id.dob, verificationStatus: id.verification_status } : undefined;
+};
+participantRouter.get('/onboarding', wrap((_req, res) => {
+  const p = detailed();
+  const body: OnboardingState = p
+    ? onboardingState(p.id, identityView(p.id))
+    : { completed: false, step: 'identity', identity: { status: 'unverified', legalName: '', email: '', dob: '' }, consent: { recontactOptIn: true, commercialOk: true, excludedCategories: [], prohibitedUses: [] }, vaultOnly: false };
+  res.json(body);
+}));
+participantRouter.post('/onboarding', wrap((req, res) => {
+  const p = detailed();
+  if (!p) throw notFound('participant');
+  const body: OnboardingState = advanceOnboarding(p.id, (req.body ?? {}) as OnboardingInput, identityView(p.id));
+  res.json(body);
+}));
+participantRouter.get('/audit', wrap((_req, res) => {
+  const p = detailed();
+  const body: AuditLog = auditLog(p ? p.id : null);
+  res.json(body);
+}));
+participantRouter.post('/audit/verify', wrap((_req, res) => {
+  const body: AuditVerify = verifyChain();
   res.json(body);
 }));
 
@@ -224,5 +288,43 @@ participantRouter.get('/profile', wrap((_req, res) => {
     verificationStatus: id?.verification_status ?? 'unverified',
     identityNote: 'Your identity lives in a separate vault. Researchers only ever see a study-scoped pseudonym, an age band and a country — never your name, contact details or date of birth.',
   };
+  res.json(body);
+}));
+
+// ---- ingestion (2026-11-10 notes): uploads are metadata only, quick logs run through the branching rules ----
+participantRouter.get('/ingest', wrap((req, res) => {
+  const p = detailed();
+  const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+  const body: IngestQueue = p ? ingestQueue(p.id, status) : { items: [], counts: { queued: 0, auto_filed: 0, needs_review: 0, accepted: 0, discarded: 0 }, classifier: classifierName(), maxFileBytes: 0, acceptedTypes: [], reviewThreshold: 0.6 };
+  res.json(body);
+}));
+participantRouter.post('/ingest/files', wrapAsync(async (req, res) => {
+  const p = detailed();
+  if (!p) throw notFound('participant');
+  const raw = req.body as { files?: UploadFileInput[] } | UploadFileInput[];
+  const files = Array.isArray(raw) ? raw : raw?.files;
+  if (!Array.isArray(files)) throw badRequest('body must be { files: UploadFileInput[] }');
+  const body: UploadResult = await uploadFiles(p.id, files);
+  res.json(body);
+}));
+participantRouter.post('/ingest/:id/review', wrap((req, res) => {
+  const p = detailed();
+  if (!p) throw notFound('participant');
+  const body: ReviewResult = reviewItem(p.id, Number(req.params.id), (req.body ?? {}) as ReviewAction);
+  res.json(body);
+}));
+participantRouter.post('/log', wrapAsync(async (req, res) => {
+  const p = detailed();
+  if (!p) throw notFound('participant');
+  const body: QuickLogResult = await quickLog(p.id, (req.body ?? {}) as QuickLogInput);
+  res.json(body);
+}));
+participantRouter.post('/import/apple-health', wrap((req, res) => {
+  const p = detailed();
+  if (!p) throw notFound('participant');
+  const b = req.body as { xml?: string } | string | undefined;
+  const xml = typeof b === 'string' ? b : b?.xml;
+  if (typeof xml !== 'string') throw badRequest('body must be { xml: string } (JSON) or the export.xml text');
+  const body: AppleHealthImportResult = importAppleHealth(p.id, xml);
   res.json(body);
 }));

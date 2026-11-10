@@ -19,7 +19,7 @@ describe('empty (schema-only) database', () => {
     expect(s.orgs).toEqual([]);
   });
   it('every participant GET route → 200 with empty data', async () => {
-    for (const url of ['/home', '/signature', '/timeline', '/timeline?category=labs', '/sources', '/missing', '/opportunities', '/opportunities?tab=past', '/ledger', '/permissions', '/profile']) {
+    for (const url of ['/home', '/signature', '/timeline', '/timeline?category=labs', '/sources', '/missing', '/opportunities', '/opportunities?tab=past', '/ledger', '/permissions', '/profile', '/ingest', '/ingest?status=needs_review', '/rewards', '/checkin', '/onboarding', '/audit']) {
       const r = await request(app).get(`/api/participant${url}`);
       expect(r.status, url).toBe(200);
     }
@@ -31,9 +31,14 @@ describe('empty (schema-only) database', () => {
     expect((await request(app).get('/api/participant/nodes/physiology.cardiovascular.blood_pressure')).status).toBe(404);
     expect((await request(app).get('/api/participant/opportunities/1')).status).toBe(404);
     expect((await request(app).post('/api/participant/sources/1/connect')).status).toBe(404);
-    for (const url of ['/opportunities/1/view', '/opportunities/1/accept', '/contributions/1/simulate', '/enrollments/1/withdraw', '/licenses/1/revoke']) {
-      expect((await request(app).post(`/api/participant${url}`)).status, url).toBe(404);
+    for (const url of ['/opportunities/1/view', '/opportunities/1/accept', '/contributions/1/simulate', '/enrollments/1/withdraw', '/licenses/1/revoke', '/ingest/1/review', '/log', '/import/apple-health', '/checkin', '/onboarding']) {
+      expect((await request(app).post(`/api/participant${url}`).send({ text: 'bp 120/80', xml: '<HealthData/>', action: 'discard', files: [], answers: [], step: 'restart' })).status, url).toBe(404);
     }
+    // the audit chain verifies (empty) on a schema-only database
+    expect((await request(app).post('/api/participant/audit/verify')).body).toMatchObject({ ok: true, events: 0, headHash: null });
+    expect((await request(app).get('/api/participant/audit')).body).toMatchObject({ events: [], total: 0, anchors: [] });
+    expect((await request(app).get('/api/participant/rewards')).body).toMatchObject({ enabled: false, rules: [], streakDays: 0 });
+    expect((await request(app).post('/api/participant/ingest/files').send({ files: [{ name: 'a.txt', bytes: 1, mime: 'text/plain' }] })).status).toBe(404);
     expect((await request(app).delete('/api/participant/categories/imaging')).status).toBe(404);
   });
   it('every buyer GET route → 200 with zero counts; preview is all zeros', async () => {

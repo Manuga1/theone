@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE HealthData [
+<!ELEMENT HealthData (ExportDate,Me,(Record|Correlation|Workout|ActivitySummary|ClinicalRecord)*)>
+]>
+<HealthData locale="en_US">
+ <ExportDate value="2026-10-24 06:00:00 -0700"/>
+ <Me HKCharacteristicTypeIdentifierDateOfBirth="" HKCharacteristicTypeIdentifierBiologicalSex="HKBiologicalSexNotSet" HKCharacteristicTypeIdentifierBloodType="HKBloodTypeNotSet" HKCharacteristicTypeIdentifierFitzpatrickSkinType="HKFitzpatrickSkinTypeNotSet"/>
+ <Record type="HKQuantityTypeIdentifierHeartRate" sourceName="Apple Watch" sourceVersion="12.0" device="&lt;&lt;HKDevice: 0x1&gt;, name:Apple Watch&gt;" unit="count/min" creationDate="2026-10-20 07:15:00 -0700" startDate="2026-10-20 07:14:33 -0700" endDate="2026-10-20 07:14:33 -0700" value="61">
+  <MetadataEntry key="HKMetadataKeyHeartRateMotionContext" value="0"/>
+ </Record>
+ <Record type="HKQuantityTypeIdentifierHeartRate" sourceName="Apple Watch" unit="count/min" startDate="2026-10-20 12:30:10 -0700" endDate="2026-10-20 12:30:10 -0700" value="88"/>
+ <Record type="HKQuantityTypeIdentifierHeartRate" sourceName="Apple Watch" unit="count/min" startDate="2026-10-21 07:02:41 -0700" endDate="2026-10-21 07:02:41 -0700" value="59"/>
+ <Record type="HKQuantityTypeIdentifierHeartRateVariabilitySDNN" sourceName="Apple Watch" unit="ms" startDate="2026-10-20 06:50:00 -0700" endDate="2026-10-20 06:51:00 -0700" value="41.2"/>
+ <Record type="HKQuantityTypeIdentifierHeartRateVariabilitySDNN" sourceName="Apple Watch" unit="ms" startDate="2026-10-21 06:48:00 -0700" endDate="2026-10-21 06:49:00 -0700" value="38.7"/>
+ <Record type="HKQuantityTypeIdentifierStepCount" sourceName="iPhone" unit="count" startDate="2026-10-20 08:00:00 -0700" endDate="2026-10-20 08:10:00 -0700" value="812"/>
+ <Record type="HKQuantityTypeIdentifierStepCount" sourceName="iPhone" unit="count" startDate="2026-10-20 12:00:00 -0700" endDate="2026-10-20 12:10:00 -0700" value="1204"/>
+ <Record type="HKQuantityTypeIdentifierStepCount" sourceName="iPhone" unit="count" startDate="2026-10-20 18:00:00 -0700" endDate="2026-10-20 18:10:00 -0700" value="2399"/>
+ <Record type="HKQuantityTypeIdentifierStepCount" sourceName="iPhone" unit="count" startDate="2026-10-21 09:00:00 -0700" endDate="2026-10-21 09:10:00 -0700" value="640"/>
+ <Record type="HKQuantityTypeIdentifierBodyMass" sourceName="Withings" unit="lb" startDate="2026-10-21 07:20:00 -0700" endDate="2026-10-21 07:20:00 -0700" value="201.3"/>
+ <Record type="HKQuantityTypeIdentifierBloodPressureSystolic" sourceName="Omron" unit="mmHg" startDate="2026-10-20 08:00:00 -0700" endDate="2026-10-20 08:00:00 -0700" value="124"/>
+ <Record type="HKQuantityTypeIdentifierBloodPressureDiastolic" sourceName="Omron" unit="mmHg" startDate="2026-10-20 08:00:00 -0700" endDate="2026-10-20 08:00:00 -0700" value="79"/>
+ <Record type="HKQuantityTypeIdentifierBloodPressureSystolic" sourceName="Omron" unit="mmHg" startDate="2026-10-21 08:05:00 -0700" endDate="2026-10-21 08:05:00 -0700" value="127"/>
+ <Record type="HKQuantityTypeIdentifierBloodPressureDiastolic" sourceName="Omron" unit="mmHg" startDate="2026-10-21 08:05:00 -0700" endDate="2026-10-21 08:05:00 -0700" value="81"/>
+ <Record type="HKQuantityTypeIdentifierBloodGlucose" sourceName="Contour" unit="mmol&lt;180.1558800000541&gt;/L" startDate="2026-10-21 07:30:00 -0700" endDate="2026-10-21 07:30:00 -0700" value="6.2"/>
+ <Record type="HKQuantityTypeIdentifierDietaryEnergyConsumed" sourceName="MealSnap" unit="Cal" startDate="2026-10-20 08:10:00 -0700" endDate="2026-10-20 08:10:00 -0700" value="430"/>
+ <Record type="HKQuantityTypeIdentifierDietaryEnergyConsumed" sourceName="MealSnap" unit="Cal" startDate="2026-10-20 12:45:00 -0700" endDate="2026-10-20 12:45:00 -0700" value="640"/>
+ <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Apple Watch" startDate="2026-10-19 23:10:00 -0700" endDate="2026-10-20 03:00:00 -0700" value="HKCategoryValueSleepAnalysisAsleepCore"/>
+ <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Apple Watch" startDate="2026-10-20 03:00:00 -0700" endDate="2026-10-20 06:40:00 -0700" value="HKCategoryValueSleepAnalysisAsleepREM"/>
+ <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Apple Watch" startDate="2026-10-19 22:50:00 -0700" endDate="2026-10-20 06:45:00 -0700" value="HKCategoryValueSleepAnalysisInBed"/>
+ <Record type="HKQuantityTypeIdentifierActiveEnergyBurned" sourceName="Apple Watch" unit="Cal" startDate="2026-10-20 08:00:00 -0700" endDate="2026-10-20 08:10:00 -0700" value="12.4"/>
+ <Record type="HKQuantityTypeIdentifierDistanceWalkingRunning" sourceName="iPhone" unit="km" startDate="2026-10-20 08:00:00 -0700" endDate="2026-10-20 08:10:00 -0700" value="0.61"/>
+ <Workout workoutActivityType="HKWorkoutActivityTypeRunning" duration="31.5" durationUnit="min" sourceName="Apple Watch" startDate="2026-10-23 07:10:00 -0700" endDate="2026-10-23 07:41:30 -0700"/>
+</HealthData>

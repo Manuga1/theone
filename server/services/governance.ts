@@ -7,6 +7,7 @@ import { graph } from '../db/graph';
 import type { Db } from '../db/driver';
 import { conflict, notFound } from '../errors';
 import { logActivity } from './activity';
+import { appendAudit } from './audit';
 import { rebuildCoverage } from './coverage';
 import { licenseNumber } from './ledger';
 import { conceptBySlug } from './ontology';
@@ -31,6 +32,8 @@ function endEnrollment(db: Db, e: EnrollmentRow, to: 'withdrawn' | 'revoked', no
     if (op && OPPORTUNITY_TRANSITIONS[op.status].includes('withdrawn')) db.run("UPDATE opportunity SET status = 'withdrawn' WHERE id = ?", e.opportunity_id);
   }
   db.run('UPDATE study SET updated_at = ? WHERE id = ?', now, e.study_id);
+  appendAudit(db, { participantId: e.participant_id, kind: to === 'withdrawn' ? 'enrollment_withdrawn' : 'enrollment_revoked', refTable: 'enrollment', refId: e.id, at: now,
+    summary: `${to === 'withdrawn' ? 'Withdrew from' : 'Enrollment revoked:'} ${e.study_name} — consent grant and license revoked (forward-only)`, payload: { studyId: e.study_id, status: to, consentGrantId: e.consent_grant_id, opportunityId: e.opportunity_id } });
 }
 
 export function withdrawEnrollment(participantId: number, enrollmentId: number, db: Db = graph()): { enrollmentId: number; status: EnrollmentStatus } {
@@ -59,6 +62,7 @@ export function revokeLicense(participantId: number, licenseId: number, db: Db =
     const e = l.enrollment_id ? enrollmentRow(l.enrollment_id, db) : undefined;
     if (e && (e.status === 'active' || e.status === 'completed')) endEnrollment(db, e, e.status === 'active' ? 'withdrawn' : 'revoked', now);
     db.run('UPDATE study SET updated_at = ? WHERE id = ?', now, l.study_id);
+    appendAudit(db, { participantId, kind: 'license_revoked', refTable: 'license', refId: l.id, at: now, summary: `Research License ${licenseNumber(l.number)} revoked — ${l.study_name} (forward-only; payments already made are kept)`, payload: { number: l.number, studyId: l.study_id, consentGrantId: l.consent_grant_id, enrollmentId: l.enrollment_id } });
     logActivity(db, { participantId, kind: 'license_revoked', text: `Research License ${licenseNumber(l.number)} revoked — analyses already performed are not undone; your data leaves the next dataset version`, occurredAt: now });
     logActivity(db, { orgId: l.org_id, kind: 'license_revoked', text: `${l.study_name}: a participant revoked their license (forward-only; refresh the dataset)`, occurredAt: now });
   });
@@ -78,6 +82,7 @@ export function deleteCategory(participantId: number, domain: string, db: Db = g
     rebuildCoverage(participantId, db);
     const current = readPermissions(participantId, db).categories.filter((c) => c.excluded).map((c) => c.slug);
     if (!current.includes(domain)) updatePermissions(participantId, { excludedCategories: [...current, domain] }, db);
+    appendAudit(db, { participantId, kind: 'category_deleted', refTable: 'concept', refId: d.id, at: now, summary: `${d.name} data deleted (${deleted} records soft-deleted) and excluded from new licenses`, payload: { domain, observationsDeleted: deleted } });
     logActivity(db, { participantId, kind: 'category_deleted', text: `${d.name} data deleted (${deleted.toLocaleString('en-US')} records) and excluded from new licenses`, occurredAt: now });
   });
   return { ok: true, writeVersion: db.writeVersion, domain, observationsDeleted: deleted, excluded: true };

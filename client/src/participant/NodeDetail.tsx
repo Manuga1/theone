@@ -1,14 +1,19 @@
-// P3 Data Node Detail: header + Verified pill + tabs (Overview / Timeline / Data Lineage / Research Use).
+// P3 Data Node Detail: header + Verified pill + tabs (Overview / Timeline / History / Data Lineage / Research Use).
+// The overview renderer follows the leaf's valueKind: continuous/float → chart, boolean → strip, text → log,
+// one_time → fact card (+ History tab with versions), categorical → variant breakdown; file/photo → artifact summary.
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { Database, ShieldCheck, FlaskConical, Users, ChevronRight } from 'lucide-react';
-import type { NodeDetail } from '@shared/api-types';
+import { Database, ShieldCheck, FlaskConical, Users, ChevronRight, GitBranch } from 'lucide-react';
+import type { NodeDetail, ValueKind } from '@shared/api-types';
 import { PROVENANCE_LABEL } from '@shared/provenance';
 import { useApi } from '../hooks';
-import { Card, Tabs, StatePill, Pill, LazyBPChart, LineageChain, TimelineRail, ErrorBox, Money, Num, money } from '../components';
+import {
+  Card, Tabs, StatePill, Pill, LazyBPChart, LineageChain, TimelineRail, ErrorBox, Money, Num, money,
+  ValueKindGlyph, VALUE_KIND_LABEL, BooleanStrip, TextLog, FactCard, HistoryTable, VariantBreakdown, ClassifiedLine,
+} from '../components';
 import { dateLong as fmtDate } from '@shared/fmt';
 
-type Tab = 'overview' | 'timeline' | 'lineage' | 'research';
+type Tab = 'overview' | 'timeline' | 'history' | 'lineage' | 'research';
 
 function SourceCards({ d }: { d: NodeDetail }) {
   return (
@@ -37,6 +42,52 @@ function ResearchCards({ d }: { d: NodeDetail }) {
   );
 }
 
+/** Which renderer the overview uses. Unknown valueKind (older API) → the series chart when there is one. */
+function rendererFor(d: NodeDetail): ValueKind | 'series' {
+  const k = d.valueKind;
+  if (!k) return 'series';
+  if (k === 'continuous' || k === 'float') return 'series';
+  return k;
+}
+
+function MainView({ d }: { d: NodeDetail }) {
+  const mode = rendererFor(d);
+  const hasSeries = d.series.points.length > 0;
+  const empty = (
+    <div className="rail__empty">
+      {d.state === 'missing' ? 'No observations yet for this variable.' : `${d.summary.nObs} observations between ${d.summary.firstAt ? fmtDate(d.summary.firstAt) : '—'} and ${d.summary.lastAt ? fmtDate(d.summary.lastAt) : '—'} (no time series view).`}
+    </div>
+  );
+  if (mode === 'series') return hasSeries ? <LazyBPChart series={d.series} title={d.name} unit={d.unit} yDomain="auto" /> : empty;
+  if (mode === 'boolean') return <><div className="card__title mb-8">Daily yes / no</div>{d.booleanStrip && d.booleanStrip.length > 0 ? <BooleanStrip cells={d.booleanStrip} /> : empty}</>;
+  if (mode === 'text') return <><div className="card__title mb-8">Notes, newest first</div>{d.textLog && d.textLog.length > 0 ? <TextLog items={d.textLog} /> : empty}</>;
+  if (mode === 'one_time') return <><div className="card__title mb-8">Current value</div><FactCard history={d.history ?? []} unit={d.unit} /><div className="tiny faint mt-8">Updates append a new version and close the previous one; the History tab lists every version.</div></>;
+  if (mode === 'categorical') {
+    const total = (d.variants ?? []).reduce((a, v) => a + v.nObs, 0);
+    return (
+      <>
+        <div className="card__title mb-8 row gap-6"><GitBranch style={{ width: 13, height: 13, color: 'var(--text-3)' }} /> Sub-branches</div>
+        <VariantBreakdown variants={d.variants ?? []} total={total} />
+        {d.textLog && d.textLog.length > 0 && <><div className="card__title mt-16 mb-8">Recent entries</div><TextLog items={d.textLog.slice(0, 8)} /></>}
+        {hasSeries && <div className="mt-16"><LazyBPChart series={d.series} title={d.name} unit={d.unit} yDomain="auto" /></div>}
+      </>
+    );
+  }
+  // file / photo: artifacts summary (files themselves stay on the device)
+  return (
+    <>
+      <div className="card__title mb-8">{mode === 'photo' ? 'Photos' : 'Files'}</div>
+      <div className="grid grid--3">
+        <Card soft tight><div className="tiny faint" style={{ fontWeight: 600 }}>Artifacts</div><div className="big-num"><Num n={d.rawVsDerived.artifactCount} /></div></Card>
+        <Card soft tight><div className="tiny faint" style={{ fontWeight: 600 }}>Derived observations</div><div className="big-num"><Num n={d.rawVsDerived.derivedCount} /></div></Card>
+        <Card soft tight><div className="tiny faint" style={{ fontWeight: 600 }}>Latest</div><div className="strong">{d.summary.lastAt ? fmtDate(d.summary.lastAt) : '—'}</div></Card>
+      </div>
+      {d.textLog && d.textLog.length > 0 && <div className="mt-12"><TextLog items={d.textLog} /></div>}
+      {hasSeries && <div className="mt-16"><LazyBPChart series={d.series} title={d.name} unit={d.unit} yDomain="auto" /></div>}
+    </>
+  );
+}
+
 export default function NodeDetailPage() {
   const { slug } = useParams();
   const q = useApi<NodeDetail>(slug ? `/participant/nodes/${slug}` : null);
@@ -44,17 +95,23 @@ export default function NodeDetailPage() {
   if (q.error) return <ErrorBox error={q.error} />;
   const d = q.data;
   if (!d) return <div className="faint small">Loading…</div>;
-  const hasSeries = d.series.points.length > 0;
+  const history = d.history ?? [];
+  const showHistory = d.valueKind === 'one_time' || history.length > 1;
+  const variantCount = d.variants?.length ?? 0;
 
   return (
     <div className="col gap-16">
       <div className="page-head--row" style={{ marginBottom: 0 }}>
         <div>
           <div className="breadcrumb"><Link to="/p/signature">Signature</Link>{d.path.slice(0, -1).map((p) => <span key={p}>› {p}</span>)}</div>
-          <h1 className="h1">{d.name}</h1>
+          <h1 className="h1 row gap-8">{d.valueKind && <ValueKindGlyph kind={d.valueKind} />}{d.name}</h1>
           <div className="sub">
-            {d.summary.spanLabel}{d.summary.nObs > 0 && <> · <Num n={d.summary.nObs} /> measurements</>}{d.unit ? ` · ${d.unit}` : ''}
+            {d.valueKind && <>{VALUE_KIND_LABEL[d.valueKind]} · </>}
+            {d.summary.spanLabel}{d.summary.nObs > 0 && <> · <Num n={d.summary.nObs} /> {d.valueKind === 'text' ? 'entries' : d.valueKind === 'one_time' ? 'versions' : 'measurements'}</>}{d.unit ? ` · ${d.unit}` : ''}
+            {d.lastLoggedRelative && <> · last logged {d.lastLoggedRelative}</>}
+            {variantCount > 0 && <> · {variantCount} sub-branch{variantCount === 1 ? '' : 'es'}</>}
           </div>
+          <ClassifiedLine classified={d.classified} />
         </div>
         <div className="row gap-6">
           {d.overlay.demand && <Pill variant="demand" icon>Requested by research</Pill>}
@@ -62,20 +119,23 @@ export default function NodeDetailPage() {
           <StatePill state={d.state} />
         </div>
       </div>
-      <Tabs variant="underline" value={tab} onChange={setTab} items={[{ key: 'overview', label: 'Overview' }, { key: 'timeline', label: 'Timeline', count: d.events.length }, { key: 'lineage', label: 'Data Lineage' }, { key: 'research', label: 'Research Use' }]} />
+      <Tabs
+        variant="underline"
+        value={tab}
+        onChange={setTab}
+        items={[
+          { key: 'overview', label: 'Overview' },
+          { key: 'timeline', label: 'Timeline', count: d.events.length },
+          ...(showHistory ? [{ key: 'history' as const, label: 'History', count: history.length }] : []),
+          { key: 'lineage', label: 'Data Lineage' },
+          { key: 'research', label: 'Research Use' },
+        ]}
+      />
 
       {tab === 'overview' && (
-        <div className="grid grid--main-aside gap-16" style={{ gridTemplateColumns: 'minmax(0, 1fr) 360px' }}>
+        <div className="grid grid--main-aside-360 gap-16">
           <div className="col gap-16">
-            <Card className="chart-card">
-              {hasSeries ? (
-                <LazyBPChart series={d.series} title={d.name} unit={d.unit} yDomain="auto" />
-              ) : (
-                <div className="rail__empty">
-                  {d.state === 'missing' ? 'No observations yet for this variable.' : `${d.summary.nObs} observations between ${d.summary.firstAt ? fmtDate(d.summary.firstAt) : '—'} and ${d.summary.lastAt ? fmtDate(d.summary.lastAt) : '—'} (no time series view).`}
-                </div>
-              )}
-            </Card>
+            <Card className="chart-card"><MainView d={d} /></Card>
             <SourceCards d={d} />
             <Card title="Data lineage"><LineageChain steps={d.lineage} /><div className="tiny faint mt-8">{d.rawVsDerived.note}</div></Card>
           </div>
@@ -84,13 +144,18 @@ export default function NodeDetailPage() {
             <Card title="Summary" soft>
               <div className="kv-grid">
                 <div><span className="k">State</span><span className="v" style={{ textTransform: 'capitalize' }}>{d.state}</span></div>
+                {d.valueKind && <div><span className="k">Data type</span><span className="v">{VALUE_KIND_LABEL[d.valueKind]}</span></div>}
                 <div><span className="k">Provenance</span><span className="v">{d.summary.provenanceClass ? PROVENANCE_LABEL[d.summary.provenanceClass] : '—'}</span></div>
                 <div><span className="k">First</span><span className="v">{d.summary.firstAt ? fmtDate(d.summary.firstAt) : '—'}</span></div>
                 <div><span className="k">Latest</span><span className="v">{d.summary.lastAt ? fmtDate(d.summary.lastAt) : '—'}</span></div>
                 <div><span className="k">Span</span><span className="v">{d.summary.spanDays} days</span></div>
                 <div><span className="k">Raw / derived</span><span className="v"><Num n={d.rawVsDerived.rawCount} /> / <Num n={d.rawVsDerived.derivedCount} /></span></div>
+                {d.classified && d.classified.n > 0 && <div><span className="k">Classified</span><span className="v"><Num n={d.classified.n} /> by {d.classified.classifier ?? '—'}{d.classified.meanConfidence !== null ? ` · ${Math.round(d.classified.meanConfidence * 100)}%` : ''}</span></div>}
               </div>
             </Card>
+            {variantCount > 0 && d.valueKind !== 'categorical' && (
+              <Card title="Sub-branches" sub="Created from your answers to follow-up questions."><VariantBreakdown variants={d.variants ?? []} total={(d.variants ?? []).reduce((a, v) => a + v.nObs, 0)} /></Card>
+            )}
           </div>
         </div>
       )}
@@ -98,6 +163,12 @@ export default function NodeDetailPage() {
       {tab === 'timeline' && (
         <Card title={`${d.name} on your timeline`} sub="Events linked to this variable.">
           <TimelineRail events={d.events} />
+        </Card>
+      )}
+
+      {tab === 'history' && (
+        <Card title="Versions" sub="Every value ever recorded. A new value closes the previous row's validity; nothing is overwritten.">
+          <HistoryTable history={history} unit={d.unit} />
         </Card>
       )}
 

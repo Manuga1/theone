@@ -2,8 +2,8 @@
 // preview (POST cohorts/preview, debounced 300 ms) and Save cohort. /b/cohorts/:id/define loads a saved cohort.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Save, Users, Stethoscope, Dna, Clock, HeartPulse, Footprints, Repeat } from 'lucide-react';
-import type { CohortPreview, SavedCohortDetail } from '@shared/api-types';
+import { Save, Users, Stethoscope, Dna, Clock, HeartPulse, Footprints, Repeat, Sparkles, X } from 'lucide-react';
+import type { CohortPreview, SavedCohortDetail, TreeNode } from '@shared/api-types';
 import { DEFAULT_CRITERIA, type CohortCriteria } from '@shared/criteria';
 import { api } from '../api';
 import { useApi } from '../hooks';
@@ -22,15 +22,23 @@ function Section({ icon, title, children }: { icon: React.ReactNode; title: stri
   );
 }
 
-function ModalityRow({ slug, label, criteria, setCriteria, unit, step, defaultSpan, defaultRank }: { slug: string; label: string; criteria: CohortCriteria; setCriteria: (c: CohortCriteria) => void; unit: 'years' | 'months' | 'days'; step: number; defaultSpan: number; defaultRank: number }) {
+/** Concepts created in the last 30 days (TreeNodeExtras.isNew from /buyer/ontology) carry a "new" marker in the picker. */
+function NewMark({ leaf }: { leaf: TreeNode | undefined }) {
+  if (!leaf?.isNew) return null;
+  return <span className="pill pill--new pill--sm" title={`Created ${leaf.lastLoggedRelative ? `· last logged ${leaf.lastLoggedRelative}` : 'in the last 30 days'}`} data-testid="concept-new">new</span>;
+}
+
+const FIXED_MODALITIES = ['biology.genomics.exome', 'clinical.encounters.ehr_history', 'physiology.cardiovascular.blood_pressure', 'physiology.metabolic.cgm', 'behavior.nutrition.food_log'];
+
+function ModalityRow({ slug, label, criteria, setCriteria, unit, step, defaultSpan, defaultRank, leaf, removable }: { slug: string; label: string; criteria: CohortCriteria; setCriteria: (c: CohortCriteria) => void; unit: 'years' | 'months' | 'days'; step: number; defaultSpan: number; defaultRank: number; leaf?: TreeNode; removable?: boolean }) {
   const m = criteria.modalities.find((x) => x.slug === slug);
   const factor = unit === 'years' ? 365 : unit === 'months' ? 30 : 1;
   const set = (next: Modality | null) => setCriteria({ ...criteria, modalities: next ? [...criteria.modalities.filter((x) => x.slug !== slug), next].sort((a, b) => a.slug.localeCompare(b.slug)) : criteria.modalities.filter((x) => x.slug !== slug) });
   return (
-    <div className="row gap-8 row--wrap" style={{ minHeight: 28 }}>
-      <label className="check" style={{ width: 150 }}>
+    <div className="row gap-8 row--wrap" style={{ minHeight: 28 }} data-slug={slug}>
+      <label className="check" style={{ width: removable ? 'auto' : 150, minWidth: 150 }}>
         <input type="checkbox" checked={!!m} onChange={(e) => set(e.target.checked ? { slug, minSpanDays: defaultSpan, minProvRank: defaultRank } : null)} />
-        {label}
+        {label} <NewMark leaf={leaf} />
       </label>
       {m && (
         <>
@@ -40,6 +48,7 @@ function ModalityRow({ slug, label, criteria, setCriteria, unit, step, defaultSp
           <ProvenanceSelect small value={m.minProvRank} onChange={(rank) => set({ ...m, minProvRank: rank })} />
         </>
       )}
+      {removable && <button type="button" className="link" style={{ marginLeft: 'auto' }} onClick={() => set(null)} aria-label={`Remove ${label}`}><X /></button>}
     </div>
   );
 }
@@ -88,6 +97,10 @@ export default function CohortBuilderPage() {
     navigate(`/b/cohorts/${r.id}/funnel`);
   }, { success: 'Cohort saved' });
 
+  // Any other leaf can be required too (the picker marks concepts created in the last 30 days as new).
+  const extraModalities = useMemo(() => criteria.modalities.filter((m) => !FIXED_MODALITIES.includes(m.slug)), [criteria.modalities]);
+  const pickable = useMemo(() => ont.leaves.filter((l) => !FIXED_MODALITIES.includes(l.slug) && !criteria.modalities.some((m) => m.slug === l.slug) && !l.slug.startsWith('clinical.diagnoses.')).sort((a, b) => Number(!!b.isNew) - Number(!!a.isNew) || a.slug.localeCompare(b.slug)), [ont.leaves, criteria.modalities]);
+  const newCount = useMemo(() => ont.leaves.filter((l) => l.isNew).length, [ont.leaves]);
   const conditions = useMemo(() => ont.leaves.filter((l) => l.slug.startsWith('clinical.diagnoses.') && l.slug !== 'clinical.diagnoses.problem_list'), [ont.leaves]);
   const labs = useMemo(() => ont.leaves.filter((l) => l.slug.startsWith('clinical.labs.')), [ont.leaves]);
   const demo = criteria.demographics;
@@ -133,13 +146,26 @@ export default function CohortBuilderPage() {
               )}
             </div>
           </Section>
-          <Section icon={<Dna />} title="Genomics"><ModalityRow slug="biology.genomics.exome" label="Exome required" criteria={criteria} setCriteria={setCriteria} unit="days" step={1} defaultSpan={0} defaultRank={3} /></Section>
-          <Section icon={<Clock />} title="Longitudinal requirements"><ModalityRow slug="clinical.encounters.ehr_history" label="EHR history" criteria={criteria} setCriteria={setCriteria} unit="years" step={1} defaultSpan={365 * 3} defaultRank={4} /></Section>
+          <Section icon={<Dna />} title="Genomics"><ModalityRow slug="biology.genomics.exome" label="Exome required" criteria={criteria} setCriteria={setCriteria} unit="days" step={1} defaultSpan={0} defaultRank={3} leaf={ont.bySlug.get('biology.genomics.exome')} /></Section>
+          <Section icon={<Clock />} title="Longitudinal requirements"><ModalityRow slug="clinical.encounters.ehr_history" label="EHR history" criteria={criteria} setCriteria={setCriteria} unit="years" step={1} defaultSpan={365 * 3} defaultRank={4} leaf={ont.bySlug.get('clinical.encounters.ehr_history')} /></Section>
           <Section icon={<HeartPulse />} title="Physiology">
-            <ModalityRow slug="physiology.cardiovascular.blood_pressure" label="Blood pressure" criteria={criteria} setCriteria={setCriteria} unit="months" step={1} defaultSpan={365} defaultRank={3} />
-            <ModalityRow slug="physiology.metabolic.cgm" label="CGM" criteria={criteria} setCriteria={setCriteria} unit="days" step={1} defaultSpan={14} defaultRank={3} />
+            <ModalityRow slug="physiology.cardiovascular.blood_pressure" label="Blood pressure" criteria={criteria} setCriteria={setCriteria} unit="months" step={1} defaultSpan={365} defaultRank={3} leaf={ont.bySlug.get('physiology.cardiovascular.blood_pressure')} />
+            <ModalityRow slug="physiology.metabolic.cgm" label="CGM" criteria={criteria} setCriteria={setCriteria} unit="days" step={1} defaultSpan={14} defaultRank={3} leaf={ont.bySlug.get('physiology.metabolic.cgm')} />
           </Section>
-          <Section icon={<Footprints />} title="Behavior"><ModalityRow slug="behavior.nutrition.food_log" label="Nutrition log" criteria={criteria} setCriteria={setCriteria} unit="days" step={1} defaultSpan={30} defaultRank={2} /></Section>
+          <Section icon={<Footprints />} title="Behavior"><ModalityRow slug="behavior.nutrition.food_log" label="Nutrition log" criteria={criteria} setCriteria={setCriteria} unit="days" step={1} defaultSpan={30} defaultRank={2} leaf={ont.bySlug.get('behavior.nutrition.food_log')} /></Section>
+          <Section icon={<Sparkles />} title="Other modalities">
+            {extraModalities.map((m) => {
+              const leaf = ont.bySlug.get(m.slug);
+              return <ModalityRow key={m.slug} slug={m.slug} label={leaf?.name ?? m.slug.split('.').pop()!.replace(/_/g, ' ')} criteria={criteria} setCriteria={setCriteria} unit="days" step={1} defaultSpan={m.minSpanDays} defaultRank={m.minProvRank} leaf={leaf} removable />;
+            })}
+            <div className="row gap-8 row--wrap">
+              <select className="select select--sm" style={{ maxWidth: 320 }} value="" aria-label="Add modality" data-testid="add-modality" onChange={(e) => { const slug = e.target.value; if (slug) setCriteria({ ...criteria, modalities: [...criteria.modalities, { slug, minSpanDays: 0, minProvRank: 2 }].sort((a, b) => a.slug.localeCompare(b.slug)) }); }}>
+                <option value="">Add a modality…</option>
+                {pickable.map((l) => <option key={l.slug} value={l.slug}>{l.isNew ? '● new · ' : ''}{l.name} ({l.slug.split('.').slice(0, 2).join(' › ')})</option>)}
+              </select>
+              {newCount > 0 && <span className="tiny faint row gap-4"><span className="pill pill--new pill--sm">new</span> {newCount} concept{newCount === 1 ? '' : 's'} created in the last 30 days (participant branches and requested variables)</span>}
+            </div>
+          </Section>
           <Section icon={<Repeat />} title="Consent">
             <label className="check"><input type="checkbox" checked={criteria.requireRecontact} onChange={(e) => setCriteria({ ...criteria, requireRecontact: e.target.checked })} />Require recontact opt-in (collection campaigns)</label>
           </Section>

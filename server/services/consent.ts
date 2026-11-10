@@ -10,6 +10,7 @@ import { graph } from '../db/graph';
 import type { Db } from '../db/driver';
 import { forbidden, notFound, conflict } from '../errors';
 import { logActivity } from './activity';
+import { appendAudit } from './audit';
 import { orgConsent } from './cohort';
 import { conceptNames, fromNet, postLedger } from './ledger';
 import { conceptBySlug, reuseFeeCents } from './ontology';
@@ -108,12 +109,20 @@ export function declineOpportunity(participantId: number, id: number, db: Db = g
 }
 
 export type ConsentCheck = { ok: true } | { ok: false; reason: string };
+export const VAULT_MODE_REASON = 'vault mode: your data is stored as a private vault — no opportunities, no licenses and no rewards until you switch vault mode off in Permissions.';
+/** True when the participant uses the graph purely as a vault (consent_setting.vault_only). */
+export function isVaultOnly(participantId: number, db: Db = graph()): boolean {
+  if (!db.tableExists('consent_setting')) return false;
+  return !!(db.get<{ v: number }>('SELECT vault_only AS v FROM consent_setting WHERE participant_id = ?', participantId)?.v ?? 0);
+}
 
 /** Red-lines (org declared uses), category exclusions (domains of the campaign scope) and the recontact opt-in. */
 export function consentCheck(participantId: number, o: Pick<OppJoined, 'buyer_org_id' | 'variables_json'>, db: Db = graph()): ConsentCheck {
   const org = orgConsent(o.buyer_org_id, db);
   if (org.blocked) return { ok: false, reason: org.reason ?? 'blocked by participant red-lines' };
-  const cs = db.get<{ excluded_categories_json: string; recontact_opt_in: number; commercial_ok: number }>('SELECT excluded_categories_json, recontact_opt_in, commercial_ok FROM consent_setting WHERE participant_id = ?', participantId);
+  const cs = db.get<{ excluded_categories_json: string; recontact_opt_in: number; commercial_ok: number; vault_only: number }>('SELECT excluded_categories_json, recontact_opt_in, commercial_ok, vault_only FROM consent_setting WHERE participant_id = ?', participantId);
+  // vault mode (2026-11-10 notes): the graph is a vault — no licensing at all
+  if (cs?.vault_only) return { ok: false, reason: VAULT_MODE_REASON };
   const excluded = new Set<string>(cs ? (JSON.parse(cs.excluded_categories_json) as string[]) : []);
   const vars = JSON.parse(o.variables_json) as SeedVariable[];
   const hit = vars.map((v) => domainOf(v.conceptSlug)).find((d) => excluded.has(d));
@@ -158,6 +167,10 @@ export function enroll(db: Db, o: OppJoined, opts: { at: string; termStart?: str
     const c = conceptBySlug(s.conceptSlug, db);
     if (c) db.run('INSERT INTO license_line (license_id, concept_id, cents, created_at) VALUES (?,?,?,?)', licenseId, c.id, s.cents, opts.at);
   }
+  appendAudit(db, { participantId: o.participant_id, kind: 'consent_granted', refTable: 'consent_grant', refId: grantId, at: opts.at, summary: `Consent granted: ${o.study_name} (${scope.length} variables, ${o.license_term_months}-month term, identity withheld)`,
+    payload: { studyId: o.study_id, opportunityId: o.id, scope, withheld: ['identity'], termMonths: o.license_term_months, reuseAllowed: false, recontactViaPlatform: true } });
+  appendAudit(db, { participantId: o.participant_id, kind: 'license_created', refTable: 'license', refId: licenseId, at: opts.at, summary: `Research License #${number} minted — ${o.study_name} (${termStart} → ${termEnd}, $${(split.participant / 100).toFixed(2)} net)`,
+    payload: { number, studyId: o.study_id, buyerOrgId: o.buyer_org_id, scope: reuse.map((s) => s.conceptSlug), termStart, termEnd, grossCents: split.gross, participantCents: split.participant, platformCents: split.platform } });
   postLedger(db, { participantId: o.participant_id, kind: 'license_fee', netCents: licenseNet, occurredAt: opts.at, studyId: o.study_id, licenseId, memo: `Research License #${number} — ${o.study_name}` });
   const contributionIds: number[] = [];
   for (const v of collect) {

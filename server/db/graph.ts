@@ -3,6 +3,7 @@
 import { Db } from './driver';
 import { GRAPH_PATH } from './paths';
 import { ensureWritableCopy } from './bootstrap';
+import { migrateGraph } from './migrate';
 
 let instance: Db | null = null;
 
@@ -10,6 +11,8 @@ export function graph(): Db {
   if (!instance) {
     ensureWritableCopy(GRAPH_PATH);
     instance = new Db(GRAPH_PATH);
+    // idempotent: CREATE IF NOT EXISTS + additive ALTERs + missing canonical concepts (a stale dev data/ keeps working)
+    migrateGraph(instance);
   }
   return instance;
 }

@@ -3,7 +3,7 @@
 // rest state regardless of what an earlier (possibly aborted) loop run left behind. Set E2E_SKIP_RESET=1 to skip the reset.
 import { request, type FullConfig } from '@playwright/test';
 
-export const API = 'http://localhost:5173/api';
+export const API = `${process.env.E2E_BASE_URL ?? 'http://localhost:5173'}/api`;
 
 export async function waitForApi(timeoutMs = 240_000): Promise<void> {
   const ctx = await request.newContext();

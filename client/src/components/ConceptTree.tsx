@@ -1,10 +1,12 @@
-// Expandable domain → group → leaf tree with ✓/◐/○ glyphs, % chips, Opportunity and $ pills, and a legend.
+// Expandable domain → group → leaf tree with ✓/◐/○ glyphs, % chips, Opportunity and $ pills, value-kind glyphs,
+// "new" badges, last-logged labels, sub-branch (variant) counts, and a legend.
 import { useState } from 'react';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronRight, GitBranch } from 'lucide-react';
 import type { TreeNode, ParticipantSignature } from '@shared/api-types';
 import { StateGlyph } from './StatusDot';
 import { Pill } from './Pill';
 import { domainStyle } from './icons';
+import { ValueKindGlyph } from './ValueKind';
 
 export type ConceptTreeProps = {
   domains: TreeNode[];
@@ -24,8 +26,12 @@ function PctChip({ pct }: { pct: number }) {
 
 function Leaf({ node, selected, onSelect }: { node: TreeNode; selected: boolean; onSelect?: (n: TreeNode) => void }) {
   return (
-    <div className={`ctree__leaf${selected ? ' ctree__leaf--selected' : ''}`} onClick={() => onSelect?.(node)} role="button">
+    <div className={`ctree__leaf${selected ? ' ctree__leaf--selected' : ''}`} onClick={() => onSelect?.(node)} role="button" data-slug={node.slug}>
+      <ValueKindGlyph kind={node.valueKind} />
       <span className="ctree__leaf-name">{node.name}</span>
+      {node.isNew && <span className="pill pill--new pill--sm" title="Created in the last 30 days">new</span>}
+      {node.variantCount !== undefined && node.variantCount > 0 && <span className="ctree__meta" title={`${node.variantCount} sub-branch${node.variantCount === 1 ? '' : 'es'}`}><GitBranch style={{ width: 9, height: 9, verticalAlign: '-1px' }} /> {node.variantCount}</span>}
+      {node.lastLoggedRelative && <span className="ctree__meta" title={node.lastLoggedAt ? `last logged ${node.lastLoggedAt}` : undefined}>{node.lastLoggedRelative}</span>}
       {node.overlay.demand && <Pill variant="demand" sm>$</Pill>}
       {node.overlay.opportunity && <Pill variant="opportunity" sm>Opportunity</Pill>}
       <StateGlyph state={node.state} />
@@ -40,6 +46,7 @@ function Group({ node, selected, onSelect, open, toggle }: { node: TreeNode; sel
       <div className="ctree__group" onClick={toggle} role="button">
         <span className="ctree__chev">{hasChildren ? open ? <ChevronDown /> : <ChevronRight /> : <span style={{ width: 12 }} />}</span>
         <span className="ctree__group-name">{node.name}</span>
+        {node.isNew && <span className="pill pill--new pill--sm">new</span>}
         <PctChip pct={node.pct} />
       </div>
       {open && node.children.map((leaf) => (leaf.children.length ? (
@@ -85,6 +92,7 @@ export function ConceptTree({ domains, legend, defaultOpen, selected, onSelectLe
     { key: 'opportunity' as const, label: 'Opportunity' },
     { key: 'demand' as const, label: 'Requested by research' },
   ];
+  const anyNew = domains.some((d) => d.children.some((g) => g.isNew || g.children.some((l) => l.isNew)));
 
   return (
     <div className="ctree">
@@ -117,6 +125,7 @@ export function ConceptTree({ domains, legend, defaultOpen, selected, onSelectLe
               {l.label}
             </span>
           ))}
+          {anyNew && <span><span className="pill pill--new pill--sm">new</span> Created in the last 30 days</span>}
         </div>
       )}
     </div>

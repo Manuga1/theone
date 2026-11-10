@@ -1,7 +1,9 @@
 // Shared e2e helpers: persona bootstrap, console-error capture, API reads through the Vite proxy, money parsing.
 import { expect, type Page, type APIRequestContext } from '@playwright/test';
 
-export const API = 'http://localhost:5173/api';
+/** Base of the Vite dev server under test; E2E_BASE_URL lets a lane run the suite against its own servers. */
+export const BASE_URL = process.env.E2E_BASE_URL ?? 'http://localhost:5173';
+export const API = `${BASE_URL}/api`;
 export const PERSONA_KEY = 'hda.persona';
 export const PERSONA_HEADER = 'x-demo-persona';
 

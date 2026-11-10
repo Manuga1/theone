@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS participant (
   enrolled_at TEXT NOT NULL,
   is_detailed INTEGER NOT NULL DEFAULT 0,
   tier INTEGER NOT NULL DEFAULT 0,
+  onboarded_at TEXT,
   created_at TEXT NOT NULL
 ) STRICT;
 CREATE INDEX IF NOT EXISTS ix_participant_demo ON participant(country, birth_year, sex);
@@ -36,6 +37,12 @@ CREATE TABLE IF NOT EXISTS concept (
   in_list INTEGER NOT NULL DEFAULT 1,
   sort_order INTEGER NOT NULL DEFAULT 0,
   description TEXT,
+  -- ingestion (2026-11-10 notes): how values behave, rule-classifier keywords, follow-up questions, sub-branch flag
+  value_kind TEXT,
+  synonyms_json TEXT NOT NULL DEFAULT '[]',
+  follow_ups_json TEXT,
+  context_rule_json TEXT,
+  is_variant INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL
 ) STRICT;
 CREATE INDEX IF NOT EXISTS ix_concept_parent ON concept(parent_id, sort_order);
@@ -91,6 +98,8 @@ CREATE TABLE IF NOT EXISTS observation (
   derivation TEXT,
   contribution_id INTEGER,
   deleted_at TEXT,
+  -- {classifier, confidence, ingestItemId} when the row was filed by the ingestion pipeline
+  classification_json TEXT,
   created_at TEXT NOT NULL
 ) STRICT;
 CREATE INDEX IF NOT EXISTS ix_observation_pco ON observation(participant_id, concept_id, observed_at);
@@ -148,6 +157,8 @@ CREATE TABLE IF NOT EXISTS consent_setting (
   willing_protocol INTEGER NOT NULL DEFAULT 1,
   willing_survey INTEGER NOT NULL DEFAULT 1,
   willing_connect INTEGER NOT NULL DEFAULT 1,
+  -- vault mode: the graph is used purely as a vault (no opportunities, no licensing, no rewards)
+  vault_only INTEGER NOT NULL DEFAULT 0,
   updated_at TEXT NOT NULL,
   created_at TEXT NOT NULL
 ) STRICT;
@@ -372,5 +383,83 @@ CREATE TABLE IF NOT EXISTS export_request (
   buyer_org_id INTEGER NOT NULL REFERENCES buyer_org(id),
   status TEXT NOT NULL DEFAULT 'requested',
   variables_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL
+) STRICT;
+
+-- ---------------------------------------------------------------------------------------------------------------
+-- Ingestion, quick log, logging rewards, check-ins and the tamper-evident audit chain (2026-11-10 founder notes).
+-- Files are never stored: ingest_item keeps name / size / mime / sha256 / a text sample only.
+-- ---------------------------------------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS ingest_item (
+  id INTEGER PRIMARY KEY,
+  participant_id INTEGER NOT NULL REFERENCES participant(id),
+  kind TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued',
+  filename TEXT,
+  bytes INTEGER,
+  mime TEXT,
+  text TEXT,
+  sha256 TEXT,
+  proposal_json TEXT,
+  review_reason TEXT,
+  concept_id INTEGER REFERENCES concept(id),
+  observation_id INTEGER REFERENCES observation(id),
+  observation_count INTEGER NOT NULL DEFAULT 0,
+  reward_cents INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  resolved_at TEXT
+) STRICT;
+CREATE INDEX IF NOT EXISTS ix_ingest_participant ON ingest_item(participant_id, status, created_at);
+CREATE INDEX IF NOT EXISTS ix_ingest_concept ON ingest_item(concept_id, status);
+
+CREATE TABLE IF NOT EXISTS reward_rule (
+  id INTEGER PRIMARY KEY,
+  participant_id INTEGER REFERENCES participant(id),
+  concept_id INTEGER NOT NULL REFERENCES concept(id),
+  cents INTEGER NOT NULL,
+  per_unit_label TEXT NOT NULL,
+  daily_cap_cents INTEGER,
+  funded_kind TEXT NOT NULL DEFAULT 'platform',
+  study_id INTEGER REFERENCES study(id),
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL
+) STRICT;
+CREATE INDEX IF NOT EXISTS ix_reward_rule_concept ON reward_rule(concept_id, active);
+
+CREATE TABLE IF NOT EXISTS checkin_day (
+  id INTEGER PRIMARY KEY,
+  participant_id INTEGER NOT NULL REFERENCES participant(id),
+  date TEXT NOT NULL,
+  done INTEGER NOT NULL DEFAULT 0,
+  reward_cents INTEGER NOT NULL DEFAULT 0,
+  answers_json TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE (participant_id, date)
+) STRICT;
+
+-- hash = sha256(prev_hash || '|' || canonical JSON of {kind, refTable, refId, payload, at}); the first prev_hash is 'genesis'
+CREATE TABLE IF NOT EXISTS audit_event (
+  id INTEGER PRIMARY KEY,
+  participant_id INTEGER REFERENCES participant(id),
+  kind TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  ref_table TEXT,
+  ref_id INTEGER,
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  at TEXT NOT NULL,
+  prev_hash TEXT NOT NULL,
+  hash TEXT NOT NULL,
+  created_at TEXT NOT NULL
+) STRICT;
+CREATE INDEX IF NOT EXISTS ix_audit_participant ON audit_event(participant_id, id);
+
+-- one row per day: Merkle root of that day's event hashes; 'simulated' = production would publish the root to a public chain
+CREATE TABLE IF NOT EXISTS audit_anchor (
+  id INTEGER PRIMARY KEY,
+  date TEXT NOT NULL UNIQUE,
+  root TEXT NOT NULL,
+  events INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'simulated',
+  note TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL
 ) STRICT;

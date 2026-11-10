@@ -4,6 +4,10 @@ import { SPLIT } from '@shared/pricing';
 import type { LedgerRow, ParticipantLedger } from '@shared/api-types';
 import { graph } from '../db/graph';
 import type { Db } from '../db/driver';
+import { appendAudit, auditHead, verifyCached } from './audit';
+
+/** Memo prefix of logging-reward rows (contribution_payment rows without a contribution). */
+export const REWARD_MEMO_PREFIX = 'Logging reward: ';
 
 export type Split = { gross: number; participant: number; platform: number };
 
@@ -55,15 +59,16 @@ export function readLedger(participantId: number, db: Db = graph()): Participant
     const scope: string[] = r.scope_json ? (JSON.parse(r.scope_json) as string[]) : [];
     // a variable-request child campaign is named by the campaign; the root campaign by the study
     const studyName = r.parent_campaign_id !== null && r.campaign_name ? r.campaign_name : r.study_name ?? '';
+    const reward = isRewardRow(r);
     return {
       id: r.id,
       date: r.occurred_at.slice(0, 10),
       kind: r.kind,
-      title: r.kind === 'license_fee' ? `Research License ${licenseNumber(r.license_number ?? 0)}` : `${r.contribution_concept ?? 'Protocol'} contribution`,
-      dataIncluded: r.kind === 'license_fee' ? scope.map((s) => names.get(s) ?? s) : r.contribution_concept ? [r.contribution_concept] : [],
-      studyName,
-      orgName: r.org_name ?? '',
-      purpose: r.purpose ?? (r.memo ?? ''),
+      title: r.kind === 'license_fee' ? `Research License ${licenseNumber(r.license_number ?? 0)}` : reward ? r.memo!.split(' — ')[0] : `${r.contribution_concept ?? 'Protocol'} contribution`,
+      dataIncluded: r.kind === 'license_fee' ? scope.map((s) => names.get(s) ?? s) : r.contribution_concept ? [r.contribution_concept] : reward ? [rewardLeafName(r.memo!)] : [],
+      studyName: reward && !studyName ? 'Platform' : studyName,
+      orgName: r.org_name ?? (reward ? 'Logging reward' : ''),
+      purpose: reward ? r.memo! : r.purpose ?? (r.memo ?? ''),
       licenseId: r.license_id,
       licenseNumber: r.license_number ? licenseNumber(r.license_number) : null,
       termStart: r.term_start,
@@ -75,13 +80,33 @@ export function readLedger(participantId: number, db: Db = graph()): Participant
       canRevoke: status === 'active',
     };
   });
+  // additive (2026-11-10 notes): micro rewards grouped per day, today's total, the audit head
+  const groups = new Map<string, { date: string; cents: number; count: number; entryIds: number[] }>();
+  for (const r of rows) {
+    if (!isRewardRow(r)) continue;
+    const date = r.occurred_at.slice(0, 10);
+    const g = groups.get(date) ?? { date, cents: 0, count: 0, entryIds: [] };
+    g.cents += r.participant_cents; g.count++; g.entryIds.push(r.id);
+    groups.set(date, g);
+  }
+  const verify = verifyCached(db);
   return {
     lifetimeEarningsCents: lifetimeEarnings(participantId, db),
     activeLicenses: activeLicenseCount(participantId, db),
     licensedUses: licensedUses(participantId, db),
     entries,
     split: { participant: SPLIT.participant, platform: SPLIT.platform },
+    rewardsToday: groups.get(DEMO_TODAY)?.cents ?? 0,
+    audit: { headHash: auditHead(db), ok: verify.ok, events: verify.events },
+    groups: Array.from(groups.values()).map((g) => ({ ...g, label: `Logging rewards · ${g.count} item${g.count === 1 ? '' : 's'}` })),
   };
+}
+function isRewardRow(r: Pick<LedgerJoined, 'kind' | 'contribution_id' | 'memo'>): boolean {
+  return r.kind === 'contribution_payment' && r.contribution_id === null && !!r.memo && r.memo.startsWith(REWARD_MEMO_PREFIX);
+}
+/** "Logging reward: Food log (per food photo) — funded by …" → "Food log" */
+function rewardLeafName(memo: string): string {
+  return memo.slice(REWARD_MEMO_PREFIX.length).replace(/\s*\(.*$/, '').trim();
 }
 
 export function lifetimeEarnings(participantId: number, db: Db = graph()): number {
@@ -95,13 +120,18 @@ export function licensedUses(participantId: number, db: Db = graph()): number {
   return db.get<{ c: number }>('SELECT COUNT(*) AS c FROM license WHERE participant_id = ? AND revoked_at IS NULL', participantId)?.c ?? 0;
 }
 
-/** Append a ledger row. The only writer of ledger_entry. */
+/** Append a ledger row. The only writer of ledger_entry; every row also appends an audit_event in the caller's transaction. */
 export function postLedger(db: Db, row: { participantId: number; kind: 'license_fee' | 'contribution_payment'; netCents: number; occurredAt: string; studyId?: number | null; licenseId?: number | null; contributionId?: number | null; memo?: string | null }): { id: number; split: Split } {
   const split = fromNet(row.netCents);
   const id = db.run(
     'INSERT INTO ledger_entry (participant_id, kind, study_id, license_id, contribution_id, gross_cents, participant_cents, platform_cents, occurred_at, memo, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
     row.participantId, row.kind, row.studyId ?? null, row.licenseId ?? null, row.contributionId ?? null, split.gross, split.participant, split.platform, row.occurredAt, row.memo ?? null, nowIso(),
   ).lastId;
+  appendAudit(db, {
+    participantId: row.participantId, kind: `ledger_${row.kind}`, refTable: 'ledger_entry', refId: id, at: row.occurredAt,
+    summary: `${row.kind === 'license_fee' ? 'License fee' : 'Payment'} $${(split.participant / 100).toFixed(2)} net${row.memo ? ` — ${row.memo}` : ''}`,
+    payload: { kind: row.kind, grossCents: split.gross, participantCents: split.participant, platformCents: split.platform, studyId: row.studyId ?? null, licenseId: row.licenseId ?? null, contributionId: row.contributionId ?? null, memo: row.memo ?? null },
+  });
   return { id, split };
 }
 

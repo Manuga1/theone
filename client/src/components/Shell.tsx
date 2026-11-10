@@ -15,22 +15,22 @@ import { SearchBar } from './SearchBar';
 import { Toasts } from '../toast';
 import { BlockedBanner, useOrgConsent } from '../buyer/shared';
 
-export type NavItem = { to: string; label: string; icon: ReactNode; end?: boolean };
+export type NavItem = { to: string; label: string; icon: ReactNode; end?: boolean; /** bottom-nav label on phones */ shortLabel?: string };
 
 export const PARTICIPANT_NAV: NavItem[] = [
-  { to: '/p', label: 'My Health', icon: <HeartPulse />, end: true },
-  { to: '/p/sources', label: 'Data Sources', icon: <Database /> },
-  { to: '/p/opportunities', label: 'Opportunities', icon: <Sparkles /> },
+  { to: '/p', label: 'My Health', icon: <HeartPulse />, end: true, shortLabel: 'Home' },
+  { to: '/p/sources', label: 'Data Sources', icon: <Database />, shortLabel: 'Sources' },
+  { to: '/p/opportunities', label: 'Opportunities', icon: <Sparkles />, shortLabel: 'Studies' },
   { to: '/p/earnings', label: 'Earnings', icon: <Wallet /> },
   { to: '/p/timeline', label: 'Timeline', icon: <Clock /> },
-  { to: '/p/permissions', label: 'Permissions', icon: <Shield /> },
+  { to: '/p/permissions', label: 'Permissions', icon: <Shield />, shortLabel: 'Consent' },
   { to: '/p/profile', label: 'Profile', icon: <User /> },
 ];
 export const BUYER_NAV: NavItem[] = [
   { to: '/b', label: 'Research', icon: <Search />, end: true },
-  { to: '/b/studies', label: 'My Studies', icon: <FlaskConical /> },
+  { to: '/b/studies', label: 'My Studies', icon: <FlaskConical />, shortLabel: 'Studies' },
   { to: '/b/datasets', label: 'Datasets', icon: <Layers /> },
-  { to: '/b/campaigns', label: 'Collection Campaigns', icon: <Megaphone /> },
+  { to: '/b/campaigns', label: 'Collection Campaigns', icon: <Megaphone />, shortLabel: 'Campaigns' },
   { to: '/b/analytics', label: 'Analytics', icon: <ChartLine /> },
   { to: '/b/admin', label: 'Admin', icon: <Settings /> },
 ];
@@ -108,9 +108,16 @@ export function Shell({ side, title, wide, children, state: stateProp, health: h
   const org = state?.orgs.find((o) => o.id === orgId) ?? state?.orgs[0] ?? null;
   const seeded = state?.seeded ?? health?.seeded ?? true;
 
+  const dark = side === 'buyer';
   return (
     <div className="shell">
-      <aside className={`shell__nav${side === 'buyer' ? ' shell__nav--dark' : ''}`}>
+      {/* ≤ 900 px: the sidebar is hidden; this top bar and the bottom nav take over (CSS in components.css). */}
+      <div className={`shell__topbar${dark ? ' shell__topbar--dark' : ''}`}>
+        <div className="shell__brand"><span className="shell__brand-mark">H</span> {side === 'participant' ? (state?.participantPseudonym ?? 'Health Data Asset') : (org?.name ?? 'Health Data Asset')}</div>
+        <button className="btn btn--sm" onClick={switchPersona} title={side === 'participant' ? 'View as buyer' : 'View as participant'} aria-label="Switch persona"><ArrowRightLeft /></button>
+        <button className="btn btn--sm" onClick={reset} title="Wipe and reseed synthetic data" aria-label="Reset demo"><RotateCcw /></button>
+      </div>
+      <aside className={`shell__nav${dark ? ' shell__nav--dark' : ''}`}>
         <div className="shell__brand"><span className="shell__brand-mark">H</span> Health Data Asset</div>
         {side === 'participant' ? (
           <div className="shell__me">
@@ -153,9 +160,9 @@ export function Shell({ side, title, wide, children, state: stateProp, health: h
             </select>
           )}
           <button className="btn btn--sm" onClick={switchPersona} title="Switch persona">
-            <ArrowRightLeft /> {side === 'participant' ? 'View as buyer' : 'View as participant'}
+            <ArrowRightLeft /> <span>{side === 'participant' ? 'View as buyer' : 'View as participant'}</span>
           </button>
-          <button className="btn btn--sm" onClick={reset} title="Wipe and reseed synthetic data"><RotateCcw /> Reset demo</button>
+          <button className="btn btn--sm" onClick={reset} title="Wipe and reseed synthetic data"><RotateCcw /> <span>Reset demo</span></button>
         </header>
         <main className={`shell__content${wide ? ' shell__content--wide' : ''}`}>
           {!seeded && side === 'participant' ? <EmptyState /> : null}
@@ -165,6 +172,14 @@ export function Shell({ side, title, wide, children, state: stateProp, health: h
         </main>
         <Toasts />
       </div>
+      <nav className={`shell__bottomnav${dark ? ' shell__bottomnav--dark' : ''}${nav.length > 7 ? ' shell__bottomnav--scroll' : ''}`} aria-label="Primary">
+        {nav.map((n) => (
+          <NavLink key={n.to} to={n.to} end={n.end} className={({ isActive }) => `navlink${isActive ? ' navlink--active' : ''}`}>
+            {n.icon}
+            {n.shortLabel ?? n.label}
+          </NavLink>
+        ))}
+      </nav>
     </div>
   );
 }

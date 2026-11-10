@@ -47,10 +47,11 @@ buyerRouter.get('/home', wrap((req, res) => {
   const tiles = consent.blocked || !ready
     ? { availableParticipants: 0, longitudinalProfiles: 0, genomicsAvailable: 0, recontactable: 0 }
     : {
-        availableParticipants: kfloorN(scalar('SELECT COUNT(*) AS n FROM participant')),
-        longitudinalProfiles: kfloorN(ehr ? scalar('SELECT COUNT(*) AS n FROM participant_coverage WHERE concept_id = ? AND span_days >= 365 AND n_obs > 0', ehr.id) : 0),
-        genomicsAvailable: kfloorN(exome ? scalar('SELECT COUNT(*) AS n FROM participant_coverage WHERE concept_id = ? AND n_obs > 0', exome.id) : 0),
-        recontactable: kfloorN(scalar('SELECT COUNT(*) AS n FROM consent_setting WHERE recontact_opt_in = 1')),
+        // vault-only participants (2026-11-10 notes) are not available to research at all
+        availableParticipants: kfloorN(scalar('SELECT COUNT(*) AS n FROM participant p LEFT JOIN consent_setting cs ON cs.participant_id = p.id WHERE COALESCE(cs.vault_only, 0) = 0')),
+        longitudinalProfiles: kfloorN(ehr ? scalar('SELECT COUNT(*) AS n FROM participant_coverage cv LEFT JOIN consent_setting cs ON cs.participant_id = cv.participant_id WHERE cv.concept_id = ? AND cv.span_days >= 365 AND cv.n_obs > 0 AND COALESCE(cs.vault_only, 0) = 0', ehr.id) : 0),
+        genomicsAvailable: kfloorN(exome ? scalar('SELECT COUNT(*) AS n FROM participant_coverage cv LEFT JOIN consent_setting cs ON cs.participant_id = cv.participant_id WHERE cv.concept_id = ? AND cv.n_obs > 0 AND COALESCE(cs.vault_only, 0) = 0', exome.id) : 0),
+        recontactable: kfloorN(scalar('SELECT COUNT(*) AS n FROM consent_setting WHERE recontact_opt_in = 1 AND vault_only = 0')),
       };
   const body: BuyerHome = {
     org: { id, name: org?.name ?? 'Unknown organisation', type: org?.type ?? 'other', declaredUses: org ? (JSON.parse(org.declared_uses_json) as string[]) : [] },

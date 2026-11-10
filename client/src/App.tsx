@@ -1,7 +1,8 @@
 // Route table (see plan § Frontend). Participant routes live under /p, buyer routes under /b; "/" redirects by persona.
 import { lazy, Suspense, type ReactNode } from 'react';
-import { Routes, Route, Navigate, Outlet } from 'react-router-dom';
-import { usePersona } from './hooks';
+import { Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
+import type { ParticipantHome } from '@shared/api-types';
+import { usePersona, useApi } from './hooks';
 import { Shell } from './components/Shell';
 import './styles/components.css';
 
@@ -15,6 +16,7 @@ import POpportunityReview from './participant/OpportunityReview';
 import PEarnings from './participant/Earnings';
 import PPermissions from './participant/Permissions';
 import PProfile from './participant/Profile';
+import POnboarding from './participant/Onboarding';
 
 import BHome from './buyer/Home';
 import BCohortBuilder from './buyer/CohortBuilder';
@@ -36,10 +38,24 @@ import BAdmin from './buyer/Admin';
 // Dev-only: in production builds the branch is dead code, so neither the route nor the chunk exists.
 const Gallery = import.meta.env.DEV ? lazy(() => import('./dev/Gallery')) : null;
 
+/**
+ * Gate every /p/* screen on onboarding: HomeExtras.onboardingCompleted (served by /participant/home, which the
+ * current API already fills) is false after "Restart onboarding" → redirect to /p/onboarding. Unknown (older API,
+ * schema-only database, request failed) → no gating. Children render while the flag loads so pages never wait on it.
+ */
+function OnboardingGate({ children }: { children: ReactNode }) {
+  const q = useApi<ParticipantHome>('/participant/home');
+  const loc = useLocation();
+  if (q.data && q.data.onboardingCompleted === false && !q.data.empty) return <Navigate to="/p/onboarding" replace state={{ from: loc.pathname }} />;
+  return <>{children}</>;
+}
+
 function ParticipantLayout() {
   return (
     <Shell side="participant" title="My Health Asset">
-      <Outlet />
+      <OnboardingGate>
+        <Outlet />
+      </OnboardingGate>
     </Shell>
   );
 }
@@ -59,6 +75,9 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<Navigate to={persona === 'participant' ? '/p' : '/b'} replace />} />
+
+      {/* Focused flow outside the shell; the participant layout redirects here while onboarding is incomplete. */}
+      <Route path="/p/onboarding" element={<POnboarding />} />
 
       <Route path="/p" element={<ParticipantLayout />}>
         <Route index element={<PHome />} />

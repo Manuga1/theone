@@ -189,6 +189,8 @@ export type OpportunityCard = {
 export type ParticipantOpportunities = {
   counts: Record<OpportunityTab, number>;
   items: OpportunityCard[];
+  /** additive (vault mode): set when the marketplace is switched off for this participant — items are then empty */
+  disabledReason?: string | null;
 };
 export type OpportunityDetail = OpportunityCard & {
   reviewed: boolean;
@@ -404,7 +406,8 @@ export type Dataset = DatasetSummary & {
   summaryOnlyN: number;
   variables: DatasetVariable[];
   documentation: { title: string; body: string }[];
-  provenance: { slug: string; label: string; classes: { cls: ProvenanceClass; pct: number }[] }[];
+  /** `classified` (additive): share of the variable's observations among dataset members that the ingestion classifier filed, with their mean confidence */
+  provenance: { slug: string; label: string; classes: { cls: ProvenanceClass; pct: number }[]; classified?: { pct: number; meanConfidence: number | null; classifier: ClassifierName | null } }[];
   missingness: { slug: string; label: string; missingPct: number; byGroup: { label: string; missingPct: number }[] }[];
   longitudinal: { slug: string; label: string; buckets: { label: string; n: number }[] }[];
   ontology: TreeNode[];

@@ -4,7 +4,7 @@ import type { CampaignVariable } from '@shared/requirement';
 import type { ContributionItem, OpportunityCard, OpportunityDetail, OpportunityStatus, OpportunityTab, ParticipantOpportunities } from '@shared/api-types';
 import { graph } from '../db/graph';
 import type { Db } from '../db/driver';
-import { collectVariables, reuseScope } from './consent';
+import { collectVariables, isVaultOnly, reuseScope, VAULT_MODE_REASON } from './consent';
 import { conceptNames } from './ledger';
 import { participantMatches } from './match';
 
@@ -52,6 +52,8 @@ const SELECT = `SELECT op.id, op.status, op.missing_concepts_json AS missing, op
 
 export function listOpportunities(participantId: number, tab: OpportunityTab | undefined, db: Db = graph()): ParticipantOpportunities {
   if (!db.tableExists('opportunity')) return { counts: { available: 0, in_progress: 0, past: 0 }, items: [] };
+  // vault mode (2026-11-10 notes): the marketplace is switched off for this participant
+  if (isVaultOnly(participantId, db)) return { counts: { available: 0, in_progress: 0, past: 0 }, items: [], disabledReason: VAULT_MODE_REASON };
   const rows = db.all<OppRow>(`${SELECT} WHERE op.participant_id = ? ORDER BY op.offered_at DESC, op.id DESC`, participantId);
   const cards = rows.map((r) => toCard(r, participantId, db));
   // available offers oldest-first (the order they were received); in-progress / past newest-first
@@ -132,7 +134,7 @@ export function contributions(opportunityId: number, db: Db = graph()): Contribu
 
 /** Sum of comp across available offers (P1 "up to $…" tile). */
 export function availableSummary(participantId: number, db: Db = graph()): { count: number; maxCents: number } {
-  if (!db.tableExists('opportunity')) return { count: 0, maxCents: 0 };
+  if (!db.tableExists('opportunity') || isVaultOnly(participantId, db)) return { count: 0, maxCents: 0 };
   const r = db.get<{ n: number; c: number }>("SELECT COUNT(*) AS n, COALESCE(SUM(comp_max_cents), 0) AS c FROM opportunity WHERE participant_id = ? AND status IN ('offered','viewed','reviewed')", participantId);
   return { count: r?.n ?? 0, maxCents: r?.c ?? 0 };
 }

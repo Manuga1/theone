@@ -1,12 +1,13 @@
 // P5 "Add / Connect Data": source cards, missing dimensions, connect/disconnect (soft-delete + coverage rebuild),
 // "Notify me" demand watches and self-reported values.
-import { nowIso, relative } from '@shared/clock';
+import { DEMO_TODAY, daysBetween, nowIso, relative } from '@shared/clock';
 import { PROVENANCE_RANK } from '@shared/provenance';
-import type { MissingDimension, ParticipantSources, SelfReportInput, SourceCard } from '@shared/api-types';
+import type { MissingDimension, ParticipantSources, SelfReportInput, SourceCard, SourceCardExtras } from '@shared/api-types';
 import { graph } from '../db/graph';
 import type { Db } from '../db/driver';
 import { badRequest, notFound } from '../errors';
 import { logActivity } from './activity';
+import { appendAudit } from './audit';
 import { computeCompleteness, overlays } from './completeness';
 import { rebuildCoverage } from './coverage';
 import { conceptBySlug, leaves } from './ontology';
@@ -17,7 +18,28 @@ type SourceRow = { id: number; kind: string; vendor: string; label: string; acti
 export function listSources(participantId: number, db: Db = graph()): SourceCard[] {
   if (!db.tableExists('source')) return [];
   return db.all<SourceRow>('SELECT id, kind, vendor, label, action_label, status, connected_at, last_sync_at, verified FROM source WHERE participant_id = ? ORDER BY sort_order, id', participantId)
-    .map((s) => ({ id: s.id, kind: s.kind, label: s.label, vendor: s.vendor, actionLabel: s.action_label, status: s.status, verified: !!s.verified, connectedAt: s.connected_at, lastSyncAt: s.last_sync_at, lastSyncRelative: s.last_sync_at && s.status === 'connected' ? relative(s.last_sync_at) : null }));
+    .map((s) => ({ id: s.id, kind: s.kind, label: s.label, vendor: s.vendor, actionLabel: s.action_label, status: s.status, verified: !!s.verified, connectedAt: s.connected_at, lastSyncAt: s.last_sync_at, lastSyncRelative: s.last_sync_at && s.status === 'connected' ? relative(s.last_sync_at) : null, ...sourceExtras(s) }));
+}
+
+// ---- SourceCardExtras (2026-11-10 notes): integration cards carry a kind group, a health flag and the import formats they accept ----
+const KIND_GROUP: Record<string, SourceCardExtras['kindGroup']> = {
+  ehr: 'records', pharmacy: 'records', lab: 'labs', wearable: 'wearable', apple_health: 'wearable', genomics: 'genomics', imaging: 'imaging', nutrition: 'nutrition',
+  bp_device: 'device', scale: 'device', cgm: 'device', dynamometer: 'device', microbiome: 'device', environment: 'device', survey: 'survey', self_report: 'import', upload: 'import',
+};
+const IMPORT_FORMATS: Record<NonNullable<SourceCardExtras['kindGroup']>, string[]> = {
+  records: ['.pdf', '.txt'], labs: ['.pdf', '.csv'], wearable: ['export.xml', '.csv', '.json'], genomics: ['.vcf', '.vcf.gz'], imaging: ['.dcm', '.dicom', '.nii', '.zip'],
+  nutrition: ['image/*'], device: ['.csv', '.json'], survey: [], import: ['.csv', '.json', '.pdf', 'image/*', '.txt'],
+};
+/** Groups whose data arrives continuously: a connected source that has not synced for 30 days needs attention. One-off groups (genomics, imaging, survey, import) never go stale. */
+const CONTINUOUS: ReadonlySet<SourceCardExtras['kindGroup']> = new Set(['records', 'labs', 'wearable', 'nutrition', 'device']);
+export const STALE_AFTER_DAYS = 30;
+export function sourceExtras(s: Pick<SourceRow, 'kind' | 'status' | 'last_sync_at'>): SourceCardExtras {
+  const kindGroup = KIND_GROUP[s.kind] ?? 'import';
+  const importFormats = s.kind === 'apple_health' ? ['export.xml'] : IMPORT_FORMATS[kindGroup];
+  if (s.status === 'disconnected') return { kindGroup, health: 'needs_attention', errorText: 'Disconnected — its data is no longer shared; reconnect to restore it', importFormats };
+  if (s.status !== 'connected' || !s.last_sync_at) return { kindGroup, health: 'never_synced', errorText: null, importFormats };
+  const stale = CONTINUOUS.has(kindGroup) && daysBetween(s.last_sync_at.slice(0, 10), DEMO_TODAY) > STALE_AFTER_DAYS;
+  return { kindGroup, health: stale ? 'needs_attention' : 'ok', errorText: stale ? `No sync for ${daysBetween(s.last_sync_at.slice(0, 10), DEMO_TODAY)} days — reconnect or import a file` : null, importFormats };
 }
 
 /** "Verified sources" = connected ∧ verified. */
@@ -87,8 +109,9 @@ export function disconnectSource(participantId: number, sourceId: number, db: Db
   const now = nowIso();
   db.tx(() => {
     db.run("UPDATE source SET status = 'disconnected' WHERE id = ?", sourceId);
-    db.run('UPDATE observation SET deleted_at = ? WHERE participant_id = ? AND source_id = ? AND deleted_at IS NULL', now, participantId, sourceId);
+    const hidden = db.run('UPDATE observation SET deleted_at = ? WHERE participant_id = ? AND source_id = ? AND deleted_at IS NULL', now, participantId, sourceId).changes;
     rebuildCoverage(participantId, db);
+    appendAudit(db, { participantId, kind: 'source_disconnected', refTable: 'source', refId: sourceId, at: now, summary: `${s.label} (${s.vendor}) disconnected — ${hidden} records no longer shared`, payload: { kind: s.kind, observationsHidden: hidden } });
     logActivity(db, { participantId, kind: 'source_disconnected', text: `${s.label} disconnected — its data is no longer shared`, occurredAt: now });
   });
 }

@@ -7,6 +7,7 @@ import { PROVENANCE_RANK, type ProvenanceClass } from '@shared/provenance';
 import { insert } from '../db/migrate';
 import { type SeedCtx, concept, pickExactly } from './context';
 import { seedAlexMarketplace } from './alex-marketplace';
+import { seedAlexIngest } from './alex-ingest';
 
 export const ALEX = {
   pseudonym: 'P-7f3a9c1e2b',
@@ -60,7 +61,7 @@ function clampToNow(iso: string): string {
   return iso > DEMO_NOW ? DEMO_NOW : iso;
 }
 
-export type AlexSources = Record<'ehr' | 'quest' | 'watch' | 'genomics' | 'imaging' | 'meals' | 'omron' | 'surveys' | 'pharmacy' | 'labcorp' | 'kaiser' | 'scale' | 'manual' | 'dexcom' | 'dyno' | 'microbiome' | 'air', number>;
+export type AlexSources = Record<'ehr' | 'quest' | 'watch' | 'genomics' | 'imaging' | 'meals' | 'omron' | 'surveys' | 'pharmacy' | 'labcorp' | 'kaiser' | 'scale' | 'manual' | 'dexcom' | 'dyno' | 'microbiome' | 'air' | 'apple', number>;
 
 export function seedAlex(ctx: SeedCtx): number {
   const db = ctx.graph;
@@ -101,6 +102,8 @@ export function seedAlex(ctx: SeedCtx): number {
     src('dyno', 'dynamometer', 'Camry dynamometer kit', 'Grip strength', 'Request kit', 'available', null, null, false, 15);
     src('microbiome', 'microbiome', 'Stool sequencing kit', 'Microbiome', 'Request kit', 'available', null, null, false, 16);
     src('air', 'environment', 'PurpleAir', 'Air quality sensor', 'Connect sensor', 'available', null, null, false, 17);
+    // Apple Health needs a native app for live sync (2026-11-10 notes): the card offers the export.xml import; the first import connects it
+    src('apple', 'apple_health', 'Apple Health', 'Apple Health (export.xml)', 'Import export.xml', 'available', null, null, false, 18);
   });
 
   // ---------------- conditions + problem list ----------------
@@ -323,6 +326,9 @@ export function seedAlex(ctx: SeedCtx): number {
 
   // ---------------- marketplace: orgs, studies, opportunities, enrollments, licenses, ledger ----------------
   seedAlexMarketplace(ctx, w, S);
+
+  // ---------------- ingestion history: queue items, variants, quick-log observations ----------------
+  seedAlexIngest(ctx, w, S);
 
   // ---------------- activity ("What changed this week") ----------------
   db.tx(() => {

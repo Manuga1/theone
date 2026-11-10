@@ -1,12 +1,12 @@
 // P3 "Data node detail": summary, series, lineage, raw-vs-derived, research use and events for one leaf concept.
 import { DEMO_TODAY, addDays, daysBetween, relative } from '@shared/clock';
 import { PROVENANCE_LABEL, type ProvenanceClass } from '@shared/provenance';
-import type { LineageStep, NodeDetail, SeriesPoint } from '@shared/api-types';
+import type { ClassifierName, LineageStep, NodeDetail, NodeTypedViews, SeriesPoint, ValueKind } from '@shared/api-types';
 import { graph } from '../db/graph';
 import type { Db } from '../db/driver';
 import { coverageFor } from './coverage';
 import { leafState, overlays } from './completeness';
-import { conceptBySlug, conceptPath, type ConceptRow } from './ontology';
+import { conceptBySlug, conceptPath, familyIds, isNewConcept, variantsOf, type ConceptRow } from './ontology';
 import { licenseNumber } from './ledger';
 import { timelineEvents } from './timeline';
 
@@ -20,14 +20,17 @@ export function nodeDetail(participantId: number, slug: string, db: Db = graph()
   const ov = overlays(participantId, db).get(slug) ?? { opportunity: false, demand: false };
   const overlay = { opportunity: state !== 'verified' && ov.opportunity, demand: ov.demand, opportunityId: state !== 'verified' && ov.opportunity ? ov.opportunityId : undefined };
 
+  // observations of a leaf live on the leaf itself or on one of its variant sub-branches
+  const ids = familyIds(c, db);
+  const IN = `(${ids.map(() => '?').join(',')})`;
   const source = db.get<SourceRow>(
     `SELECT s.id, s.kind, s.vendor, s.label, s.last_sync_at, COUNT(*) AS n FROM observation o JOIN source s ON s.id = o.source_id
-      WHERE o.participant_id = ? AND o.concept_id = ? AND o.deleted_at IS NULL GROUP BY s.id ORDER BY n DESC LIMIT 1`, participantId, c.id);
+      WHERE o.participant_id = ? AND o.concept_id IN ${IN} AND o.deleted_at IS NULL GROUP BY s.id ORDER BY n DESC LIMIT 1`, participantId, ...ids);
   const counts = db.get<{ raw: number; derived: number; artifacts: number; best: ProvenanceClass | null }>(
     `SELECT SUM(CASE WHEN derivation IS NULL THEN 1 ELSE 0 END) AS raw, SUM(CASE WHEN derivation IS NOT NULL THEN 1 ELSE 0 END) AS derived,
             COUNT(DISTINCT artifact_id) AS artifacts,
-            (SELECT provenance_class FROM observation o2 WHERE o2.participant_id = o.participant_id AND o2.concept_id = o.concept_id AND o2.deleted_at IS NULL ORDER BY provenance_rank DESC LIMIT 1) AS best
-       FROM observation o WHERE participant_id = ? AND concept_id = ? AND deleted_at IS NULL`, participantId, c.id);
+            (SELECT provenance_class FROM observation o2 WHERE o2.participant_id = o.participant_id AND o2.concept_id IN ${IN} AND o2.deleted_at IS NULL ORDER BY provenance_rank DESC LIMIT 1) AS best
+       FROM observation o WHERE participant_id = ? AND concept_id IN ${IN} AND deleted_at IS NULL`, ...ids, participantId, ...ids);
   const best = counts?.best ?? null;
   const spanDays = cov ? Math.max(0, daysBetween(cov.first_at.slice(0, 10), cov.last_at.slice(0, 10))) : 0;
 
@@ -47,6 +50,7 @@ export function nodeDetail(participantId: number, slug: string, db: Db = graph()
   };
 
   return {
+    ...typedViews(participantId, c, ids, cov?.last_at ?? null, db),
     slug, name: c.name, path: conceptPath(slug, db), state, overlay, unit: c.unit, summary,
     series: series(participantId, c, db),
     lineage: lineage(c, source?.vendor ?? null, (counts?.derived ?? 0) > 0, best),
@@ -135,10 +139,12 @@ function series(participantId: number, c: ConceptRow, db: Db): NodeDetail['serie
   const from = addDays(to, -365);
   const empty = { keys: [], points: [], window: { from, to } };
   if (c.data_type === 'file' || c.data_type === 'dicom') return empty;
+  const ids = familyIds(c, db);
+  const IN = `(${ids.map(() => '?').join(',')})`;
   if (c.slug === 'physiology.cardiovascular.blood_pressure') {
     const rows = db.all<{ d: string; sys: number; dia: number }>(
       `SELECT substr(observed_at, 1, 10) AS d, AVG(value_num) AS sys, AVG(json_extract(value_json, '$.diastolic')) AS dia FROM observation
-        WHERE participant_id = ? AND concept_id = ? AND deleted_at IS NULL AND derivation IS NULL AND substr(observed_at, 1, 10) BETWEEN ? AND ? GROUP BY d ORDER BY d`, participantId, c.id, from, to);
+        WHERE participant_id = ? AND concept_id IN ${IN} AND deleted_at IS NULL AND derivation IS NULL AND substr(observed_at, 1, 10) BETWEEN ? AND ? GROUP BY d ORDER BY d`, participantId, ...ids, from, to);
     return {
       keys: [{ key: 'systolic', label: 'Systolic', color: '#1d6ef5' }, { key: 'diastolic', label: 'Diastolic', color: '#8b5cf6' }],
       points: rows.map((r) => ({ t: r.d, values: { systolic: Math.round(r.sys), diastolic: Math.round(r.dia) } })),
@@ -149,8 +155,8 @@ function series(participantId: number, c: ConceptRow, db: Db): NodeDetail['serie
   const windowed = c.data_type === 'time_series';
   const rows = db.all<{ d: string; v: number }>(
     `SELECT substr(observed_at, 1, 10) AS d, AVG(value_num) AS v FROM observation
-      WHERE participant_id = ? AND concept_id = ? AND deleted_at IS NULL AND derivation IS NULL AND value_num IS NOT NULL ${windowed ? 'AND substr(observed_at, 1, 10) BETWEEN ? AND ?' : ''} GROUP BY d ORDER BY d`,
-    ...(windowed ? [participantId, c.id, from, to] : [participantId, c.id]));
+      WHERE participant_id = ? AND concept_id IN ${IN} AND deleted_at IS NULL AND derivation IS NULL AND value_num IS NOT NULL ${windowed ? 'AND substr(observed_at, 1, 10) BETWEEN ? AND ?' : ''} GROUP BY d ORDER BY d`,
+    ...(windowed ? [participantId, ...ids, from, to] : [participantId, ...ids]));
   if (!rows.length) return empty;
   const points: SeriesPoint[] = rows.map((r) => ({ t: r.d, values: { [key]: Math.round(r.v * 10) / 10 } }));
   return { keys: [{ key, label: c.name, color: '#1d6ef5' }], points, window: windowed ? { from, to } : { from: rows[0].d, to: rows[rows.length - 1].d } };
@@ -178,4 +184,63 @@ function research(participantId: number, c: ConceptRow, db: Db): NodeDetail['res
       ...payments.map((l) => ({ licenseNumber: l.number ? licenseNumber(l.number) : 'Protocol payment', studyName: l.study, orgName: l.org, cents: l.cents, date: l.date })),
     ].sort((a, b) => a.date.localeCompare(b.date)),
   };
+}
+
+// ------------------------------------------------------------------------------------------------ typed views (2026-11-10 notes)
+type ObsRow = { id: number; observed_at: string; valid_from: string | null; valid_to: string | null; value_num: number | null; value_text: string | null; value_json: string | null; unit: string | null; provenance_class: ProvenanceClass; verification: string; classification_json: string | null; concept_id: number };
+function attributesOf(json: string | null): Record<string, string> {
+  if (!json) return {};
+  try {
+    const v = JSON.parse(json) as { attributes?: Record<string, string> };
+    return v && typeof v === 'object' && v.attributes ? v.attributes : {};
+  } catch { return {}; }
+}
+function labelOf(r: ObsRow, unit: string | null, valueKind: ValueKind): string {
+  const a = attributesOf(r.value_json);
+  if (a.systolic && a.diastolic) return `${a.systolic}/${a.diastolic} mmHg`;
+  if (valueKind === 'boolean') return r.value_num === 0 ? 'No' : 'Yes';
+  if (r.value_num !== null && valueKind !== 'text' && valueKind !== 'one_time') return `${r.value_num}${unit ? ` ${unit}` : ''}`;
+  return r.value_text ?? (r.value_num !== null ? String(r.value_num) : '');
+}
+
+/** valueKind-specific views: history (one_time versions), text log, boolean strip, variants, classifier stats, last logged. */
+function typedViews(participantId: number, c: ConceptRow, ids: number[], lastAt: string | null, db: Db): NodeTypedViews {
+  const valueKind: ValueKind = c.value_kind ?? 'text';
+  const IN = `(${ids.map(() => '?').join(',')})`;
+  const out: NodeTypedViews = { valueKind, lastLoggedAt: lastAt, lastLoggedRelative: lastAt ? relative(lastAt) : null };
+  const rows = (limit: number) => db.all<ObsRow>(
+    `SELECT id, observed_at, valid_from, valid_to, value_num, value_text, value_json, unit, provenance_class, verification, classification_json, concept_id FROM observation
+      WHERE participant_id = ? AND concept_id IN ${IN} AND deleted_at IS NULL AND derivation IS NULL ORDER BY observed_at DESC, id DESC LIMIT ?`, participantId, ...ids, limit);
+  if (valueKind === 'one_time') {
+    const all = rows(50);
+    out.history = all.map((r, i) => ({ id: r.id, observedAt: r.observed_at, validFrom: r.valid_from ?? r.observed_at.slice(0, 10), validTo: r.valid_to, valueLabel: labelOf(r, c.unit, valueKind), provenance: PROVENANCE_LABEL[r.provenance_class] ?? r.provenance_class, verification: r.verification, current: r.valid_to === null && i === all.findIndex((x) => x.valid_to === null) }));
+  }
+  if (valueKind === 'text' || valueKind === 'categorical' || valueKind === 'photo' || valueKind === 'file') {
+    out.textLog = rows(60).map((r) => ({ id: r.id, observedAt: r.observed_at, text: r.value_text ?? labelOf(r, c.unit, valueKind), attributes: { ...attributesOf(r.value_json), ...(r.concept_id !== c.id ? { variant: conceptBySlugById(r.concept_id, db) } : {}) } }));
+  }
+  if (valueKind === 'boolean') {
+    const byDate = new Map<string, boolean>();
+    for (const r of rows(400)) { const d = r.observed_at.slice(0, 10); if (!byDate.has(d)) byDate.set(d, r.value_num !== 0); }
+    out.booleanStrip = Array.from({ length: 14 }, (_, i) => { const date = addDays(DEMO_TODAY, i - 13); return { date, value: byDate.has(date) ? byDate.get(date)! : null }; });
+  }
+  const variants = variantsOf(c.id, db);
+  if (variants.length || valueKind === 'categorical') {
+    out.variants = variants.map((v) => {
+      const st = db.get<{ n: number; last: string | null }>('SELECT COUNT(*) AS n, MAX(observed_at) AS last FROM observation WHERE participant_id = ? AND concept_id = ? AND deleted_at IS NULL AND derivation IS NULL', participantId, v.id);
+      return { slug: v.slug, name: v.name, nObs: st?.n ?? 0, lastAt: st?.last ?? null, createdAt: v.created_at, isNew: isNewConcept(v.created_at) };
+    }).sort((a, b) => b.nObs - a.nObs || a.name.localeCompare(b.name));
+  }
+  const cl = db.all<{ classification_json: string }>(`SELECT classification_json FROM observation WHERE participant_id = ? AND concept_id IN ${IN} AND deleted_at IS NULL AND classification_json IS NOT NULL`, participantId, ...ids)
+    .map((r) => { try { return JSON.parse(r.classification_json) as { classifier?: ClassifierName; confidence?: number }; } catch { return null; } }).filter((x): x is { classifier?: ClassifierName; confidence?: number } => !!x);
+  if (cl.length) {
+    const conf = cl.map((x) => x.confidence).filter((x): x is number => typeof x === 'number');
+    const byName = new Map<ClassifierName, number>();
+    for (const x of cl) if (x.classifier) byName.set(x.classifier, (byName.get(x.classifier) ?? 0) + 1);
+    const top = [...byName.entries()].sort((a, b) => b[1] - a[1])[0];
+    out.classified = { n: cl.length, meanConfidence: conf.length ? Math.round((conf.reduce((a, b) => a + b, 0) / conf.length) * 100) / 100 : null, classifier: top ? top[0] : null };
+  }
+  return out;
+}
+function conceptBySlugById(id: number, db: Db): string {
+  return db.get<{ name: string }>('SELECT name FROM concept WHERE id = ?', id)?.name ?? '';
 }

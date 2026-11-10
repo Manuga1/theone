@@ -4,6 +4,7 @@ import { IS_BUNDLE } from '../db/paths';
 import { DEMO_NOW, DEMO_TODAY } from '@shared/clock';
 import type { DemoResetInput, DemoResetResult, DemoState, Health } from '@shared/api-types';
 import { resetDemo } from '../seed/reset';
+import { classifierName } from '../services/classify';
 
 export const demoRouter = Router();
 
@@ -36,6 +37,7 @@ demoRouter.get('/demo/state', (req, res) => {
     now: DEMO_NOW,
     participantPseudonym: detailed?.pseudonym ?? null,
     hosted: IS_BUNDLE || !!process.env.VERCEL,
+    classifier: classifierName(),
   };
   res.json(body);
 });

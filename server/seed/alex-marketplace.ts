@@ -5,6 +5,7 @@ import { addMonths, hoursAgo, nowIso } from '@shared/clock';
 import { DEFAULT_CRITERIA, type CohortCriteria } from '@shared/criteria';
 import type { CampaignVariable } from '@shared/requirement';
 import { insert } from '../db/migrate';
+import { appendAudit } from '../services/audit';
 import { fromNet, postLedger } from '../services/ledger';
 import { criteriaHash } from '../services/cohort-hash';
 import { type SeedCtx, concept } from './context';
@@ -193,6 +194,10 @@ export function seedAlexMarketplace(ctx: SeedCtx, w: AlexWriter, S: AlexSources)
       gross_cents: gross, participant_cents: participant, platform_cents: platform, revoked_at: null, created_at: `${termStart}T10:00:00Z`,
     });
     for (const [slug, cents] of lines) insert(db, 'license_line', { license_id: licenseId, concept_id: concept(ctx, slug), cents, created_at: `${termStart}T10:00:00Z` });
+    if (grantId) appendAudit(db, { participantId: pid, kind: 'consent_granted', refTable: 'consent_grant', refId: grantId, at: `${termStart}T10:00:00Z`, summary: `Consent granted: ${s.name} (${scopeSlugs(s).length} variables, ${s.termMonths}-month term, identity withheld)`,
+      payload: { studyId: ctx.studies[key], scope: scopeSlugs(s), withheld: ['identity'], termMonths: s.termMonths, reuseAllowed: false, recontactViaPlatform: true } });
+    appendAudit(db, { participantId: pid, kind: 'license_created', refTable: 'license', refId: licenseId, at: `${termStart}T10:00:00Z`, summary: `Research License #${no} minted — ${s.name} (${termStart} → ${termEnd}, $${(participant / 100).toFixed(2)} net)`,
+      payload: { number: no, studyId: ctx.studies[key], buyerOrgId: ctx.orgs[s.org], scope: lines.map(([slug]) => slug), termStart, termEnd, grossCents: gross, participantCents: participant, platformCents: platform } });
     postLedger(db, { participantId: pid, kind: 'license_fee', netCents: net, occurredAt: `${termStart}T10:00:00Z`, studyId: ctx.studies[key], licenseId, memo: `Research License #${no} — ${s.name}` });
     w.event(termStart, 'license', 'research', `Research License #${no}`, `${s.name} (${ORGS.find((o) => o.key === s.org)!.name})`, null);
     return licenseId;

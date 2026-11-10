@@ -10,6 +10,8 @@ import { ROOT } from './db/paths';
 
 export function createApp(): express.Express {
   const app = express();
+  // the Apple Health export is posted as text or { xml } and may be large (≤ 25 MB); body parsers skip a body already parsed
+  app.use('/api/participant/import/apple-health', express.json({ limit: '25mb' }), express.text({ type: ['text/xml', 'application/xml', 'text/plain'], limit: '25mb' }));
   app.use(express.json({ limit: '2mb' }));
   app.use('/api', persona);
   app.use('/api/participant', participantRouter);

@@ -362,7 +362,7 @@ describe('the loop (scale 0.05)', () => {
     const leaf = sig.domains.flatMap((d) => d.children.flatMap((g) => g.children)).find((l) => l.slug === r.conceptSlug);
     expect(leaf).toBeTruthy();
     expect(leaf!.overlay.demand).toBe(true);
-    expect(((await bget('/ontology')).body as { conceptCount: number }).conceptCount).toBe(103);
+    expect(((await bget('/ontology')).body as { conceptCount: number }).conceptCount).toBe(115); // 114 canonical concepts (variant sub-branches are not counted) + the new one
     await bpost(`/studies/${studyId}/variables`, { concept: 'nope.nope', protocol: { method: 'survey', durationDays: 1 }, minProvRank: 3, targetN: 20 }).expect(404);
     await bpost(`/studies/${studyId}/variables`, { concept: { name: 'x', parentSlug: 'nope' }, protocol: { method: 'survey', durationDays: 1 }, minProvRank: 3, targetN: 20 }).expect(400);
   });

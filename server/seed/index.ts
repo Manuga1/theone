@@ -7,7 +7,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
 import { Rng, DEFAULT_SEED } from '@shared/rng';
-import { nowIso } from '@shared/clock';
 import { DEFAULT_CRITERIA } from '@shared/criteria';
 import { flattenOntology } from '@shared/ontology';
 import { Db } from '../db/driver';
@@ -21,19 +20,23 @@ import { finalizeCampaigns } from './finalize';
 import { expectedFunnel, expectedTiles, FULL_TARGETS } from './tiers';
 import { rebuildCoverage } from '../services/coverage';
 import { evaluateCohort } from '../services/cohort';
+import { ensureAnchors } from '../services/audit';
 
 export type SeedOptions = { graph: Db; vault: Db; scale?: number; seed?: string; log?: (s: string) => void; schemaOnly?: boolean };
 export type SeedReport = { ms: number; participants: number; funnel: number[]; expectedFunnel: number[]; tiles: { total: number; ehr1y: number; exome: number; recontact: number; recontactBase: number }; observations: number };
 
+/** The canonical ontology predates every participant: concepts created later (variable requests, review "create branch") read as new in the tree. */
+export const ONTOLOGY_GENESIS = '2023-01-01T00:00:00Z';
+
 export function seedConcepts(db: Db): Map<string, number> {
   const ids = new Map<string, number>();
-  const now = nowIso();
   db.tx(() => {
     for (const c of flattenOntology()) {
       const id = db.run(
-        'INSERT INTO concept (slug, parent_id, name, level, weight, unit, data_type, min_span_days, freshness_days, collection_method, enrichable, comp_cents, device_cost_cents, reuse_comp_cents, in_ring, in_list, sort_order, description, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        'INSERT INTO concept (slug, parent_id, name, level, weight, unit, data_type, min_span_days, freshness_days, collection_method, enrichable, comp_cents, device_cost_cents, reuse_comp_cents, in_ring, in_list, sort_order, description, value_kind, synonyms_json, follow_ups_json, context_rule_json, is_variant, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?)',
         c.slug, c.parentSlug ? ids.get(c.parentSlug)! : null, c.name, c.level, c.weight, c.unit, c.dataType, c.minSpanDays, c.freshnessDays, c.method, c.enrichable ? 1 : 0,
-        c.compCents, c.deviceCostCents, c.reuseCompCents, c.inRing ? 1 : 0, c.inList ? 1 : 0, c.sortOrder, c.description, now,
+        c.compCents, c.deviceCostCents, c.reuseCompCents, c.inRing ? 1 : 0, c.inList ? 1 : 0, c.sortOrder, c.description,
+        c.valueKind, JSON.stringify(c.synonyms), c.followUps ? JSON.stringify(c.followUps) : null, c.contextRule ? JSON.stringify(c.contextRule) : null, ONTOLOGY_GENESIS,
       ).lastId;
       ids.set(c.slug, id);
     }
@@ -64,6 +67,8 @@ export function seedAll(opts: SeedOptions): SeedReport {
     finalizeCampaigns(ctx);
     log('[seed] marketplace');
     seedMarketplace(ctx);
+    // every seeded ledger row / grant / license already appended its hash-chained audit_event; anchor each past day's Merkle root
+    log(`[seed] audit anchors: ${ensureAnchors(opts.graph)} days`);
     opts.graph.exec('ANALYZE');
     opts.graph.endBulk();
 

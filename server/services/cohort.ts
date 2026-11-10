@@ -51,6 +51,8 @@ type ConceptRow = { id: number; slug: string; name: string; enrichable: number; 
 export const BARS_NOTE = 'Share of the cohort base with any data for the variable, including data collected by running campaigns — the bars move as collection campaigns complete.';
 
 const DEMO_YEAR = Number(DEMO_TODAY.slice(0, 4));
+/** The consent predicate's recontact flag over `consent_setting cs`: opted in AND not in vault mode. */
+export const VAULT_AWARE_RECONTACT = 'CASE WHEN COALESCE(cs.vault_only, 0) = 1 THEN 0 ELSE COALESCE(cs.recontact_opt_in, 0) END';
 const OPEN_STATUSES = "('offered','viewed','reviewed','accepted','in_progress','submitted')";
 
 const caches = new WeakMap<Db, Map<string, Evaluation>>();
@@ -178,11 +180,12 @@ function compute(c: CohortCriteria, opts: CohortOptions, db: Db): Evaluation {
   if (d.ageMin !== undefined) { params.push(DEMO_YEAR - d.ageMin); where.push('p.birth_year <= ?'); }
   if (d.ageMax !== undefined) { params.push(DEMO_YEAR - d.ageMax); where.push('p.birth_year >= ?'); }
   if (d.sex && d.sex !== 'any') { params.push(d.sex); where.push('p.sex = ?'); }
-  if (c.requireRecontact) where.push('cs.recontact_opt_in = 1');
+  if (c.requireRecontact) where.push('cs.recontact_opt_in = 1 AND COALESCE(cs.vault_only, 0) = 0');
 
   // Participant is scanned in rowid order (NOT INDEXED): the consent/coverage joins then read sequentially and the
   // GROUP BY needs no temp B-tree. A full scan of the participant table is ~15 ms at full scale.
-  const inner = `SELECT p.id AS pid, COALESCE(cs.recontact_opt_in, 0) AS recontact, COALESCE(cs.commercial_ok, 1) AS commercial, COALESCE(cs.excluded_categories_json, '[]') AS excl,
+  // Vault-only participants (2026-11-10 notes) are never recontactable: they drop out of every consent-gated figure.
+  const inner = `SELECT p.id AS pid, ${VAULT_AWARE_RECONTACT} AS recontact, COALESCE(cs.commercial_ok, 1) AS commercial, COALESCE(cs.excluded_categories_json, '[]') AS excl,
       ${condExprs.length ? `(${condExprs.join(' AND ')})` : '1'} AS cond_ok, ${openOpp} AS open_opp${exprs.length ? ', ' + exprs.join(', ') : ''}
     FROM participant p NOT INDEXED
     LEFT JOIN consent_setting cs ON cs.participant_id = p.id

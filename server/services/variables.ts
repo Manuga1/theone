@@ -92,10 +92,11 @@ export function requestVariable(orgId: number, studyId: number, body: VariableRe
       else {
         const maxOrder = db.get<{ n: number | null }>('SELECT MAX(sort_order) AS n FROM concept')?.n ?? 0;
         const method = METHODS.includes(body.concept.method as ProtocolRequirement['method']) ? body.concept.method : 'protocol';
+        const valueKind = method === 'kit' || method === 'upload' ? 'file' : method === 'photo' ? 'photo' : method === 'device' ? 'continuous' : body.concept.unit ? 'float' : 'text';
         db.run(
-          'INSERT INTO concept (slug, parent_id, name, level, weight, unit, data_type, min_span_days, freshness_days, collection_method, enrichable, comp_cents, device_cost_cents, in_ring, in_list, sort_order, description, created_at) VALUES (?,?,?,?,0,?,?,?,NULL,?,1,?,0,0,1,?,?,?)',
-          slug, parent.id, body.concept.name.trim(), 'leaf', body.concept.unit ?? null, method === 'kit' || method === 'upload' ? 'file' : 'structured', Math.max(0, Math.round(body.concept.minSpanDays ?? 0)), method,
-          Math.max(0, Math.round(Number(body.compCents) || 0)), maxOrder + 1, `Requested by ${study.org_name} for ${study.name}`, now);
+          'INSERT INTO concept (slug, parent_id, name, level, weight, unit, data_type, min_span_days, freshness_days, collection_method, enrichable, comp_cents, device_cost_cents, in_ring, in_list, sort_order, description, value_kind, synonyms_json, created_at) VALUES (?,?,?,?,0,?,?,?,NULL,?,1,?,0,0,1,?,?,?,?,?)',
+          slug, parent.id, body.concept.name.trim(), 'leaf', body.concept.unit ?? null, method === 'kit' || method === 'upload' ? 'file' : method === 'device' ? 'time_series' : 'structured', Math.max(0, Math.round(body.concept.minSpanDays ?? 0)), method,
+          Math.max(0, Math.round(Number(body.compCents) || 0)), maxOrder + 1, `Requested by ${study.org_name} for ${study.name}`, valueKind, JSON.stringify([body.concept.name.trim().toLowerCase()]), now);
         isNew = true;
         c = db.get<ConceptRow>('SELECT * FROM concept WHERE slug = ?', slug);
       }
@@ -118,7 +119,7 @@ export function requestVariable(orgId: number, studyId: number, body: VariableRe
     const contacts = contactsForTarget(targetN, members.length);
     const watchers = db.all<{ pid: number }>(
       `SELECT w.participant_id AS pid FROM demand_watch w JOIN consent_setting cs ON cs.participant_id = w.participant_id
-        WHERE w.concept_id = ? AND cs.recontact_opt_in = 1 AND instr(cs.excluded_categories_json, ?) = 0
+        WHERE w.concept_id = ? AND cs.recontact_opt_in = 1 AND cs.vault_only = 0 AND instr(cs.excluded_categories_json, ?) = 0
           AND NOT EXISTS (SELECT 1 FROM participant_coverage cv WHERE cv.participant_id = w.participant_id AND cv.concept_id = ? AND cv.n_obs > 0 AND cv.best_prov_rank >= ?)`,
       concept.id, `"${concept.slug.split('.')[0]}"`, concept.id, variable.requirement.historical!.minProvRank).map((r) => r.pid);
     const offered = offerOpportunities(db, campaign, variables, members, contacts, new Rng(`variable:${campaignId}`), now, watchers);
