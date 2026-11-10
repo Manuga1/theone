@@ -12,7 +12,7 @@ export type Persona = 'participant' | `buyer:${number}`;
 export type NodeState = 'verified' | 'partial' | 'missing';
 export type LeafOverlay = { opportunity: boolean; demand: boolean; opportunityId?: number };
 
-export type TreeNode = {
+export type TreeNode = TreeNodeExtras & {
   slug: string;
   name: string;
   level: 'domain' | 'group' | 'leaf';
@@ -65,7 +65,7 @@ export type LineageStep = { key: string; label: string; detail?: string };
 // ---------- participant ----------
 export type RingNode = { slug: string; name: string; pct: number };
 
-export type ParticipantHome = {
+export type ParticipantHome = HomeExtras & {
   participant: { pseudonym: string; firstName: string; age: number };
   completeness: { pct: number; deltaMonth: number };
   verifiedSources: number;
@@ -85,7 +85,7 @@ export type ParticipantSignature = {
 
 export type SeriesPoint = { t: string; values: Record<string, number> };
 
-export type NodeDetail = {
+export type NodeDetail = NodeTypedViews & {
   slug: string;
   name: string;
   path: string[];
@@ -129,7 +129,7 @@ export type ParticipantTimeline = {
   };
 };
 
-export type SourceCard = {
+export type SourceCard = SourceCardExtras & {
   id: number;
   kind: string;
   label: string;
@@ -225,7 +225,7 @@ export type LedgerRow = {
   platformCents: number;
   canRevoke: boolean;
 };
-export type ParticipantLedger = {
+export type ParticipantLedger = LedgerExtras & {
   lifetimeEarningsCents: number;
   activeLicenses: number;
   licensedUses: number;
@@ -239,9 +239,11 @@ export type ParticipantPermissions = {
   recontactOptIn: boolean;
   commercialOk: boolean;
   preauthorizeReuseOnly: boolean;
+  /** vault mode: no opportunities, no licensing, no rewards; the participant uses the graph purely as a vault */
+  vaultOnly?: boolean;
   note: string;
 };
-export type PermissionsUpdate = Partial<Pick<ParticipantPermissions, 'recontactOptIn' | 'commercialOk' | 'preauthorizeReuseOnly'>> & {
+export type PermissionsUpdate = Partial<Pick<ParticipantPermissions, 'recontactOptIn' | 'commercialOk' | 'preauthorizeReuseOnly' | 'vaultOnly'>> & {
   excludedCategories?: string[];
 };
 
@@ -446,6 +448,8 @@ export type DemoState = {
   participantPseudonym: string | null;
   /** true on a hosted (serverless) deployment: state lives on the serving instance and may reset */
   hosted?: boolean;
+  /** which classifier files uploads and quick logs: 'claude' when an Anthropic credential is configured, else 'rules' */
+  classifier?: ClassifierName;
 };
 export type Health = { ok: boolean; ready: boolean; seeded: boolean };
 export type Ok = { ok: true; writeVersion: number };
@@ -480,3 +484,160 @@ export type CategoryDeleteResult = Ok & { domain: string; observationsDeleted: n
 /** POST /demo/reset body + result */
 export type DemoResetInput = { scale?: number; schemaOnly?: boolean };
 export type DemoResetResult = Ok & { seeded: boolean; participants: number; ms: number };
+
+// =====================================================================================================
+// Ingestion, quick log, branching, rewards, vault mode, onboarding, audit chain (added for the notes of 2026-11-10)
+// =====================================================================================================
+
+/** How a leaf's values behave. one_time = updatable fact (age, family history): updates append, old rows keep valid_to. */
+export type ValueKind = 'continuous' | 'float' | 'boolean' | 'text' | 'one_time' | 'categorical' | 'file' | 'photo';
+export type IngestKind = 'upload' | 'quicklog' | 'photo' | 'voice' | 'apple_health' | 'checkin';
+export type IngestStatus = 'queued' | 'auto_filed' | 'needs_review' | 'accepted' | 'discarded';
+export type ClassifierName = 'rules' | 'claude';
+
+export type NewConceptProposal = { name: string; parentSlug: string; valueKind: ValueKind; unit?: string | null; isVariantOf?: string | null };
+export type FollowUp = { attribute: string; question: string; options?: string[]; createsSubBranch: boolean };
+export type Extracted = {
+  valueNum?: number | null;
+  valueText?: string | null;
+  valueBool?: boolean | null;
+  unit?: string | null;
+  observedAt?: string | null;
+  attributes?: Record<string, string>;
+  context?: 'rest' | 'exercise' | 'sleep' | null;
+};
+export type Proposal = {
+  conceptSlug: string | null;
+  conceptName: string | null;
+  path: string[];
+  newConcept: NewConceptProposal | null;
+  confidence: number;
+  rationale: string;
+  extracted: Extracted;
+  followUp: FollowUp | null;
+  classifier: ClassifierName;
+  alternatives: { conceptSlug: string; conceptName: string; confidence: number }[];
+};
+
+export type IngestItem = {
+  id: number;
+  kind: IngestKind;
+  status: IngestStatus;
+  filename: string | null;
+  bytes: number | null;
+  mime: string | null;
+  text: string | null;
+  proposal: Proposal | null;
+  reviewReason: string | null;
+  conceptSlug: string | null;
+  conceptName: string | null;
+  observationId: number | null;
+  observationCount: number;
+  rewardCents: number;
+  createdAt: string;
+  relative: string;
+};
+export type IngestQueue = {
+  items: IngestItem[];
+  counts: Record<IngestStatus, number>;
+  classifier: ClassifierName;
+  maxFileBytes: number;
+  acceptedTypes: string[];
+  reviewThreshold: number;
+};
+export type UploadFileInput = { name: string; bytes: number; mime: string; sha256?: string | null; textSample?: string | null; lastModified?: string | null };
+export type UploadResult = { items: IngestItem[]; autoFiled: number; needsReview: number; rejected: { name: string; reason: string }[]; rewardCents: number };
+export type ReviewAction =
+  | { action: 'accept' }
+  | { action: 'move'; conceptSlug: string }
+  | { action: 'create_branch'; newConcept: NewConceptProposal }
+  | { action: 'discard' };
+export type ReviewResult = { item: IngestItem; createdConcept: { slug: string; name: string; path: string[] } | null; rewardCents: number };
+
+export type QuickLogInput = { text: string; via?: 'text' | 'voice'; pendingId?: number | null; answer?: string | null };
+export type QuickLogResult = {
+  status: 'filed' | 'follow_up' | 'needs_review';
+  item: IngestItem;
+  followUp: FollowUp | null;
+  filedAs: { conceptSlug: string; conceptName: string; path: string[]; valueLabel: string; newBranch: boolean; observedAt: string } | null;
+  rewardCents: number;
+  message: string;
+};
+
+export type RewardRule = {
+  id: number;
+  conceptSlug: string;
+  conceptName: string;
+  cents: number;
+  perUnitLabel: string;
+  dailyCapCents: number | null;
+  fundedBy: { kind: 'campaign' | 'platform'; name: string; studyId: number | null };
+  today: { count: number; cents: number };
+};
+export type LoggingRewards = {
+  enabled: boolean;
+  disabledReason: string | null;
+  rules: RewardRule[];
+  todayCents: number;
+  weekCents: number;
+  streakDays: number;
+};
+export type CheckInPrompt = { id: string; conceptSlug: string; conceptName: string; question: string; valueKind: ValueKind; options?: string[]; unit?: string | null };
+export type CheckIn = { date: string; done: boolean; prompts: CheckInPrompt[]; streakDays: number; rewardCents: number };
+export type CheckInInput = { answers: { id: string; value: string | number | boolean | null }[] };
+export type CheckInResult = { filed: number; rewardCents: number; streakDays: number; items: IngestItem[] };
+
+export type OnboardingStep = 'identity' | 'consent' | 'mode' | 'done';
+export type OnboardingState = {
+  completed: boolean;
+  step: OnboardingStep;
+  identity: { status: 'unverified' | 'pending' | 'verified'; legalName: string; email: string; dob: string };
+  consent: { recontactOptIn: boolean; commercialOk: boolean; excludedCategories: string[]; prohibitedUses: string[] };
+  vaultOnly: boolean;
+};
+export type OnboardingInput =
+  | { step: 'identity'; confirm: true }
+  | { step: 'consent'; recontactOptIn: boolean; commercialOk: boolean; excludedCategories: string[] }
+  | { step: 'mode'; vaultOnly: boolean }
+  | { step: 'done' }
+  | { step: 'restart' };
+
+export type AuditEvent = {
+  id: number;
+  at: string;
+  kind: string;
+  summary: string;
+  refTable: string | null;
+  refId: number | null;
+  hash: string;
+  prevHash: string;
+};
+export type AuditAnchor = { date: string; root: string; events: number; status: 'simulated' | 'published'; note: string };
+export type AuditVerify = { ok: boolean; events: number; headHash: string | null; brokenAt: number | null; verifiedAt: string };
+export type AuditLog = { events: AuditEvent[]; total: number; headHash: string | null; anchors: AuditAnchor[]; verify: AuditVerify; explanation: string };
+
+export type AppleHealthImportResult = { records: number; imported: number; skipped: number; byConcept: { conceptSlug: string; conceptName: string; n: number }[]; artifactId: number | null; item: IngestItem };
+
+/** Additive fields on existing types (all optional so older callers keep compiling). */
+export type NodeHistoryRow = { id: number; observedAt: string; validFrom: string | null; validTo: string | null; valueLabel: string; provenance: string; verification: string; current: boolean };
+export type NodeVariant = { slug: string; name: string; nObs: number; lastAt: string | null; createdAt: string; isNew: boolean };
+export type NodeTypedViews = {
+  valueKind?: ValueKind;
+  history?: NodeHistoryRow[];
+  textLog?: { id: number; observedAt: string; text: string; attributes: Record<string, string> }[];
+  booleanStrip?: { date: string; value: boolean | null }[];
+  variants?: NodeVariant[];
+  classified?: { n: number; meanConfidence: number | null; classifier: ClassifierName | null };
+  lastLoggedAt?: string | null;
+  lastLoggedRelative?: string | null;
+};
+export type TreeNodeExtras = { valueKind?: ValueKind; isNew?: boolean; lastLoggedAt?: string | null; lastLoggedRelative?: string | null; variantCount?: number };
+export type HomeExtras = {
+  vaultOnly?: boolean;
+  checkIn?: { done: boolean; promptCount: number; streakDays: number };
+  rewardsToday?: { cents: number; count: number };
+  inbox?: { needsReview: number; autoFiledToday: number };
+  onboardingCompleted?: boolean;
+};
+export type LedgerExtras = { rewardsToday?: number; audit?: { headHash: string | null; ok: boolean; events: number }; groups?: { date: string; label: string; cents: number; count: number; entryIds: number[] }[] };
+export type SourceCardExtras = { kindGroup?: 'records' | 'labs' | 'wearable' | 'genomics' | 'imaging' | 'nutrition' | 'device' | 'survey' | 'import'; health?: 'ok' | 'needs_attention' | 'never_synced'; errorText?: string | null; importFormats?: string[] };
