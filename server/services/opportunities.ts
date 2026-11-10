@@ -7,6 +7,7 @@ import type { Db } from '../db/driver';
 import { collectVariables, isVaultOnly, reuseScope, VAULT_MODE_REASON } from './consent';
 import { conceptNames } from './ledger';
 import { participantMatches } from './match';
+import { mapSeq } from '../util/async';
 
 export type SeedVariable = CampaignVariable & { label?: string };
 
@@ -50,12 +51,12 @@ const SELECT = `SELECT op.id, op.status, op.missing_concepts_json AS missing, op
    FROM opportunity op JOIN campaign cp ON cp.id = op.campaign_id JOIN study s ON s.id = cp.study_id JOIN buyer_org o ON o.id = s.buyer_org_id
    LEFT JOIN cohort_definition cd ON cd.id = s.cohort_definition_id`;
 
-export function listOpportunities(participantId: number, tab: OpportunityTab | undefined, db: Db = graph()): ParticipantOpportunities {
-  if (!db.tableExists('opportunity')) return { counts: { available: 0, in_progress: 0, past: 0 }, items: [] };
+export async function listOpportunities(participantId: number, tab: OpportunityTab | undefined, db: Db = graph()): Promise<ParticipantOpportunities> {
+  if (!await db.tableExists('opportunity')) return { counts: { available: 0, in_progress: 0, past: 0 }, items: [] };
   // vault mode (2026-11-10 notes): the marketplace is switched off for this participant
-  if (isVaultOnly(participantId, db)) return { counts: { available: 0, in_progress: 0, past: 0 }, items: [], disabledReason: VAULT_MODE_REASON };
-  const rows = db.all<OppRow>(`${SELECT} WHERE op.participant_id = ? ORDER BY op.offered_at DESC, op.id DESC`, participantId);
-  const cards = rows.map((r) => toCard(r, participantId, db));
+  if (await isVaultOnly(participantId, db)) return { counts: { available: 0, in_progress: 0, past: 0 }, items: [], disabledReason: VAULT_MODE_REASON };
+  const rows = await db.all<OppRow>(`${SELECT} WHERE op.participant_id = ? ORDER BY op.offered_at DESC, op.id DESC`, participantId);
+  const cards = await mapSeq(rows, async (r) => await toCard(r, participantId, db));
   // available offers oldest-first (the order they were received); in-progress / past newest-first
   const tabRank: Record<OpportunityTab, number> = { available: 0, in_progress: 1, past: 2 };
   cards.sort((a, b) => tabRank[a.tab] - tabRank[b.tab] || (a.tab === 'available' ? a.offeredAt.localeCompare(b.offeredAt) : b.offeredAt.localeCompare(a.offeredAt)));
@@ -64,11 +65,11 @@ export function listOpportunities(participantId: number, tab: OpportunityTab | u
   return { counts, items: tab ? cards.filter((c) => c.tab === tab) : cards };
 }
 
-export function opportunityDetail(participantId: number, id: number, db: Db = graph()): OpportunityDetail | null {
-  const r = db.get<OppRow>(`${SELECT} WHERE op.id = ? AND op.participant_id = ?`, id, participantId);
+export async function opportunityDetail(participantId: number, id: number, db: Db = graph()): Promise<OpportunityDetail | null> {
+  const r = await db.get<OppRow>(`${SELECT} WHERE op.id = ? AND op.participant_id = ?`, id, participantId);
   if (!r) return null;
-  const card = toCard(r, participantId, db);
-  const names = conceptNames(db);
+  const card = await toCard(r, participantId, db);
+  const names = await conceptNames(db);
   const vars = JSON.parse(r.variables_json) as SeedVariable[];
   const collect = toCollect(vars, r.missing);
   const receive = Array.from(new Set(vars.map((v) => names.get(v.conceptSlug) ?? v.conceptSlug)));
@@ -85,7 +86,7 @@ export function opportunityDetail(participantId: number, id: number, db: Db = gr
       recontact: 'platform_only',
       compCents: r.comp_max_cents,
       perTask: collect.map((v) => ({ conceptSlug: v.conceptSlug, name: names.get(v.conceptSlug) ?? v.conceptSlug, compCents: v.compCents, method: v.requirement.protocol?.method ?? 'protocol', durationDays: v.requirement.protocol?.durationDays ?? 1 })),
-      reusedCompCents: reuseScope(vars, r.missing, db).reduce((a, s) => a + s.cents, 0),
+      reusedCompCents: (await reuseScope(vars, r.missing, db)).reduce((a, s) => a + s.cents, 0),
     },
   };
 }
@@ -95,12 +96,12 @@ export function toCollect(vars: SeedVariable[], missingJson: string): SeedVariab
   return collectVariables(vars, missingJson);
 }
 /** What is REUSED under the opportunity (licensed, not collected): reuse variables + held collect_if_missing variables — labelled by concept name. */
-export function toReused(vars: SeedVariable[], missingJson: string, names: Map<string, string>, db: Db): string[] {
-  return reuseScope(vars, missingJson, db).map((s) => (s.variable.mode === 'reuse' ? variableLabel(s.variable, names) : names.get(s.conceptSlug) ?? s.conceptSlug));
+export async function toReused(vars: SeedVariable[], missingJson: string, names: Map<string, string>, db: Db): Promise<string[]> {
+  return (await reuseScope(vars, missingJson, db)).map((s) => (s.variable.mode === 'reuse' ? variableLabel(s.variable, names) : names.get(s.conceptSlug) ?? s.conceptSlug));
 }
 
-function toCard(r: OppRow, participantId: number, db: Db): OpportunityCard {
-  const names = conceptNames(db);
+async function toCard(r: OppRow, participantId: number, db: Db): Promise<OpportunityCard> {
+  const names = await conceptNames(db);
   const vars = JSON.parse(r.variables_json) as SeedVariable[];
   const collect = toCollect(vars, r.missing);
   const criteria = r.criteria_json ? CohortCriteria.parse(JSON.parse(r.criteria_json)) : null;
@@ -115,26 +116,26 @@ function toCard(r: OppRow, participantId: number, db: Db): OpportunityCard {
     compCents: r.comp_max_cents,
     compIsMax: collect.length >= 4,
     requirements: collect.map((v) => variableLabel(v, names)),
-    reused: toReused(vars, r.missing, names, db),
-    likelyMatch: criteria ? participantMatches(criteria, participantId, db) : false,
+    reused: await toReused(vars, r.missing, names, db),
+    likelyMatch: criteria ? await participantMatches(criteria, participantId, db) : false,
     campaignId: r.campaign_id,
     studyId: r.study_id,
     enrollmentId: r.enrollment_id,
     offeredAt: r.offered_at,
     completedAt: r.completed_at,
-    contributions: contributions(r.id, db),
+    contributions: await contributions(r.id, db),
   };
 }
 
-export function contributions(opportunityId: number, db: Db = graph()): ContributionItem[] {
-  return db.all<{ id: number; slug: string; name: string; method: string; duration_days: number; status: ContributionItem['status']; comp_cents: number; observation_count: number }>(
-    `SELECT c.id, k.slug, k.name, c.method, c.duration_days, c.status, c.comp_cents, c.observation_count FROM contribution c JOIN concept k ON k.id = c.concept_id WHERE c.opportunity_id = ? ORDER BY c.id`, opportunityId)
+export async function contributions(opportunityId: number, db: Db = graph()): Promise<ContributionItem[]> {
+  return (await db.all<{ id: number; slug: string; name: string; method: string; duration_days: number; status: ContributionItem['status']; comp_cents: number; observation_count: number }>(
+      `SELECT c.id, k.slug, k.name, c.method, c.duration_days, c.status, c.comp_cents, c.observation_count FROM contribution c JOIN concept k ON k.id = c.concept_id WHERE c.opportunity_id = ? ORDER BY c.id`, opportunityId))
     .map((c) => ({ id: c.id, conceptSlug: c.slug, name: c.name, method: c.method, durationDays: c.duration_days, status: c.status, compCents: c.comp_cents, observationCount: c.observation_count }));
 }
 
 /** Sum of comp across available offers (P1 "up to $…" tile). */
-export function availableSummary(participantId: number, db: Db = graph()): { count: number; maxCents: number } {
-  if (!db.tableExists('opportunity') || isVaultOnly(participantId, db)) return { count: 0, maxCents: 0 };
-  const r = db.get<{ n: number; c: number }>("SELECT COUNT(*) AS n, COALESCE(SUM(comp_max_cents), 0) AS c FROM opportunity WHERE participant_id = ? AND status IN ('offered','viewed','reviewed')", participantId);
+export async function availableSummary(participantId: number, db: Db = graph()): Promise<{ count: number; maxCents: number }> {
+  if (!await db.tableExists('opportunity') || await isVaultOnly(participantId, db)) return { count: 0, maxCents: 0 };
+  const r = await db.get<{ n: number; c: number }>("SELECT COUNT(*) AS n, COALESCE(SUM(comp_max_cents), 0) AS c FROM opportunity WHERE participant_id = ? AND status IN ('offered','viewed','reviewed')", participantId);
   return { count: r?.n ?? 0, maxCents: r?.c ?? 0 };
 }

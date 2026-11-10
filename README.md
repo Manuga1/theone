@@ -5,29 +5,31 @@ A runnable model of a participant-owned health data network: one **personal heal
 - **Participant app** ("My Health Asset"): what data do I have, how complete is it, who used it, what did I earn, what can I add.
 - **Buyer / researcher app** ("Research Workspace"): who has the data I need, where are the gaps, what would it cost to fill them, run the study, access the controlled dataset.
 
-Everything on screen is a query over the same SQLite database. The flywheel from the founder brief runs end to end: **buyer question → cohort search → missing data → paid collection → richer asset → future value**. The 2026-11-10 notes added the other half of the loop, how data gets *in*: a quick log (text or voice) and a folder upload that the graph files into the right branch by itself, sub-branches that open for a new brand, drink or activity, micro-rewards per log, a daily check-in, a vault-only mode, onboarding, an Apple Health `export.xml` import and a tamper-evident audit log.
+Everything on screen is a query over the same PostgreSQL database (Supabase when deployed, PGlite locally). The flywheel from the founder brief runs end to end: **buyer question → cohort search → missing data → paid collection → richer asset → future value**. The 2026-11-10 notes added the other half of the loop, how data gets *in*: a quick log (text or voice) and a folder upload that the graph files into the right branch by itself, sub-branches that open for a new brand, drink or activity, micro-rewards per log, a daily check-in, a vault-only mode, onboarding, an Apple Health `export.xml` import and a tamper-evident audit log.
 
 This is a model, not a product: no real integrations (connecting MyChart, a BP cuff, etc. is simulated; Apple Health is a file import, not live sync), no authentication beyond a persona switch, no diagnostics or risk scoring, no payments rails, nothing on a blockchain. See *Boundaries* below.
 
 ## Run it
 
-Requires Node 22.13+ (uses the built-in `node:sqlite`; no native modules).
+Requires Node 22. No database server is needed locally: without a `DATABASE_URL` the API uses **PGlite** (Postgres compiled to WASM, in-process) stored under `data/pglite`.
 
 ```bash
 npm install
-npm run dev        # seeds data/ on first run (~15 s), then API on :4000 and app on :5173
+npm run dev        # seeds data/pglite on first run (~1–2 min at full scale), then API on :4000 and app on :5173
 ```
+
+To run against a real Postgres instead (Supabase or a local server), set `DATABASE_URL` (or `POSTGRES_URL`); `npm run seed` then seeds that database.
 
 Open <http://localhost:5173>. The header has a **persona switch** (participant ⇄ buyer), a buyer **organisation selector**, and **Reset demo**.
 
 | Script | What it does |
 |---|---|
 | `npm run dev` | Seed if `data/` is empty, then start API (tsx watch) and Vite together |
-| `npm run seed` | Regenerate the full synthetic dataset (deterministic; ~15 s on a 4-core machine) |
+| `npm run seed` | Regenerate the full synthetic dataset into the configured database (deterministic; `SEED_SCALE` / `--scale` for less) |
 | `npm run seed:small` | Same at 5 % scale (for quick runs) |
-| `npm run data:wipe` | Delete every generated database file |
-| `npm test` | Unit + API tests (in-memory DB, 5 % scale) |
-| `npm run test:full` | Exact full-scale assertions (needs a full seed in `data/`) |
+| `npm run data:wipe` | Delete the local database (`data/pglite`) |
+| `npm test` | Unit + API tests (in-memory PGlite, 5 % scale; `TEST_DATABASE_URL=postgres://…` runs them against a real server) |
+| `npm run test:full` | Exact full-scale assertions (needs a full seed in `data/pglite`) |
 | `npm run test:e2e` | Playwright: screenshots of all screens (desktop + phone), the notes' logging flows, vault / onboarding / audit, the browser flywheel |
 | `npm run typecheck` | Server and client type checks |
 | `npm run build` / `npm start` | Production build of the client, served by the API |
@@ -36,10 +38,11 @@ Environment knobs: `CLASSIFIER=rules` forces the rule classifier (tests always s
 
 ## Synthetic data, and how to remove it
 
-All fake data lives in **`data/graph.sqlite` and `data/vault.sqlite`**, which are generated and gitignored. Nothing synthetic is committed, and the only code that produces it is `server/seed/`.
+Locally all fake data lives in **`data/pglite`** (generated, gitignored); deployed, it lives in the Supabase project. Nothing synthetic is committed, and the only code that produces it is `server/seed/`.
 
-- `npm run data:wipe` deletes it. `npm run seed` regenerates it. The in-app **Reset demo** button does both (≈ 15 s) and returns to the persona's home page.
-- `DATA_DIR=/somewhere npm run dev` (or `GRAPH_DB=` / `VAULT_DB=`) keeps the databases elsewhere; the seed check, the seed CLI and the server all resolve the same path.
+- `npm run data:wipe` deletes the local database. `npm run seed` regenerates it (or reseeds `DATABASE_URL`). The seed is built in an in-memory PGlite and bulk-copied (`COPY`) into the target in one transaction, and a pristine copy is kept in the `seed_snapshot` schema.
+- The in-app **Reset demo** button restores that snapshot server-side (TRUNCATE + INSERT … SELECT, a few seconds) and returns to the persona's home page.
+- `DATA_DIR=/somewhere npm run dev` (or `PGLITE_DIR=`) keeps the local database elsewhere; the seed check, the seed CLI and the server all resolve the same path.
 - `SEED_DISABLED=1 npm run dev` (or `node scripts/ensure-seed.mjs --no-seed`) creates the schema only. The app runs against an empty database: participant pages show an empty state and buyer counts read zero. A test boots the API this way and asserts every route still answers.
 - To remove generation entirely, delete `server/seed/` and the `ensure-seed` step from the `dev`/`start` scripts. Real data would enter through the same observation envelope (`observation` table) via connectors you write.
 
@@ -57,11 +60,12 @@ shared/     contracts: api-types.ts (every endpoint's shape), ontology.ts (conce
             synonyms, follow-ups, context rules), branching.ts (the pure decision tree: file router, text pipeline,
             type rules, confidence policy), requirement.ts (historical vs protocol semantics), criteria.ts (cohort
             filters, zod), pricing.ts, clock.ts, rng.ts
-server/     Express 5 API over node:sqlite
-  db/       schema.sql (30 STRICT tables), vault-schema.sql (identity, separate file), driver.ts (6-method wrapper,
-            hand-rolled tx), migrate.ts (idempotent ALTERs + ontology sync for stale databases, run on open)
+server/     Express 5 API over PostgreSQL (Supabase deployed, PGlite locally and in tests)
+  db/       schema.sql (31 tables incl. the identity vault), driver.ts (async get/all/run/tx over node-postgres or PGlite;
+            transactions scoped with AsyncLocalStorage, `?` placeholders rewritten to $n), migrate.ts (idempotent
+            ALTERs + ontology sync for stale databases; run by the build and when a local database opens)
   seed/     alex.ts, alex-ingest.ts (sub-branches, inbox, reward rules, streak), alex-marketplace.ts, population.ts
-            (tiers/quotas), marketplace.ts (bulk campaign), reset.ts
+            (tiers/quotas), marketplace.ts (bulk campaign), snapshot.ts (publish + Reset demo), reset.ts
   services/ completeness, timeline, cohort (single-pass preview), estimate, campaign + state machines, consent,
             governance, simulate (contributions, study advance), dataset, variables (request another variable), ledger;
             classify (rules + Claude), ingest (queue, uploads, review, filing, variants, rewards), quicklog,
@@ -81,7 +85,7 @@ docs/       branching-decision-tree.md, audit-chain-rewards-vault.md, storage-an
 
 **Node state.** A leaf is *verified* when it has data of provenance rank ≥ 2 spanning at least its minimum, fresh enough; *partial* when data exists but a test fails (e.g. self-report only); otherwise *missing*. Overlays mark *opportunity* (an open paid offer lists the leaf) and *demand* (an active campaign collects it). Group and domain percentages are weighted means, as-of a date, so "+6 % this month" is a real comparison.
 
-**Identity.** Legal name, email, phone and date of birth live in `data/vault.sqlite`, opened only by the participant routes. Buyer responses pass an identity guard that rejects any direct or quasi-identifier key; buyers see participants only as study- or dataset-scoped hashed pseudonyms, with age bands and country, and aggregates under 20 render as "<20".
+**Identity.** Legal name, email, phone and date of birth live in the `identity` table, read only through `db/vault.ts`, which only the participant routes import. Buyer responses pass an identity guard that rejects any direct or quasi-identifier key; buyers see participants only as study- or dataset-scoped hashed pseudonyms, with age bands and country, and aggregates under 20 render as "<20".
 
 **Money.** Card amounts are net to the participant. One function computes gross = net / 0.9 and the 90/10 split. Every license and every verified contribution is an append-only ledger row. A license is created only when the participant accepts an offer; never at campaign launch.
 
@@ -117,18 +121,18 @@ docs/       branching-decision-tree.md, audit-chain-rewards-vault.md, storage-an
 
 See [DEMO.md](DEMO.md) for the click-by-click script that the end-to-end tests also run: Part 1 the participant at rest, Part 2 the buyer finds, fills and runs, **Part 3 — logging, uploads, vault** (`e2e/notes.spec.ts` + `e2e/stage2.spec.ts`: "I smoked a cigarette" → "What brand?" → a new sub-branch; a knee MRI and a lunch photo uploaded, the photo paid $1; a text the rules cannot place reviewed into a new branch; the Apple Health import; vault mode on and off; onboarding restarted; the audit chain verified), then Part 4 / 5 (`e2e/loop.spec.ts`): default cohort → funnel → gaps → expand with the **default modes** → proposal → launch → the participant's **reuse-only offer** (paid at accept) → the buyer requests gut microbiome → the participant accepts, syncs, revokes → the buyer's study and dataset move → Reset demo. It also says what changes if you set a mode to *Collect for all* instead (no reuse-only offer can exist; the participant gets a collection task instead).
 
-## Deploy to Vercel
+## Deploy to Vercel + Supabase
 
-The repo ships a Vercel Build Output pipeline (`npm run build:vercel`, declared in `vercel.json`): the Vite client becomes static files, the whole API is bundled by esbuild into one serverless function, and the synthetic databases are generated **at build time** and shipped inside the function. On a cold start the function copies them to `/tmp` and works there.
+The API is one serverless function (`npm run build:vercel`, declared in `vercel.json`: the Vite client becomes static files, the API is bundled by esbuild); every instance talks to the same **Supabase Postgres** database, so whatever one visitor does (accepting an offer, launching a campaign, logging data) is what every other visitor sees, and it survives cold starts.
 
-1. On vercel.com choose **Add New → Project** and import `Manuga1/theone`.
-2. Framework preset **Other**. The build command comes from `vercel.json`; leave Output Directory empty. Node.js 22.x (the default for new projects; see Settings → General if the build complains about `node:sqlite`).
-3. **Deploy.** The first build takes about a minute (the seed is ~15 s of it).
-4. Production branch: this code lives on `claude/busy-tesla-v610bi` while `main` still holds the previous site. Either merge the branch into `main`, or set **Settings → Git → Production Branch** to `claude/busy-tesla-v610bi` and redeploy.
+1. **Supabase project.** Any free project works. The app connects as the database owner over Postgres; it does not use the Data API (it can be disabled), and every table has RLS enabled with no policies plus `anon` / `authenticated` grants revoked.
+2. **Connect it to the Vercel project**: Supabase → Project Settings → Integrations → Vercel (*Link existing Supabase account*). The integration writes `POSTGRES_URL` (pooled, transaction mode — used at runtime) and `POSTGRES_URL_NON_POOLING` (used by the build-time seed) into the Vercel project. `DATABASE_URL` / `DATABASE_URL_DIRECT` work too if you set them by hand.
+3. **Deploy.** The build applies `schema.sql` and, if the database holds no seed of the requested scale, seeds it (`SEED_SCALE`, default **0.2** = 25,684 participants, ~20 MB, well inside the free 500 MB). Later builds skip the seed. `SEED_FORCE=1` reseeds on the next build; `SEED_DISABLED=1` ships an empty schema.
+4. Production builds need the database variables; a build without them fails with a message saying so. (The integration syncs them to the Production environment; add them to Preview too if you want preview deployments.)
 
 To enable the Claude classifier on the hosted demo add `ANTHROPIC_API_KEY` (and optionally `CLASSIFIER_MODEL`) under *Settings → Environment Variables* and redeploy; without it the function classifies by rules and says so.
 
-Hosted caveats: every serverless instance has its own copy of the data, so what you change (accepting an offer, launching a campaign) lives on the instance that served you and is gone when it is recycled. **Reset demo** reseeds that instance (≈ 15 s, inside the 60 s function limit). The footer reads "Hosted demo" in this mode. Build-time knobs: `SEED_SCALE=0.2` for a smaller function and faster cold starts, `SEED_DISABLED=1` for a schema-only deployment. For a persistent multi-user deployment run `npm start` on an ordinary server where `data/` is a real disk.
+**Reset demo** on the hosted site restores the seed snapshot (a few seconds). The footer reads "Hosted demo" in this mode.
 
 ## Deviations from the mockups (deliberate, documented)
 

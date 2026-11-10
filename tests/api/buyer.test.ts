@@ -10,7 +10,7 @@ import { seededDbs, TEST_SCALE, type TestDbs } from '../helpers/db';
 describe('buyer API', () => {
   let t: TestDbs;
   let app: ReturnType<typeof createApp>;
-  beforeAll(() => { t = seededDbs(); app = createApp(); });
+  beforeAll(async () => { t = await seededDbs(); app = createApp(); });
   const as = (org: number) => ({ [PERSONA_HEADER]: `buyer:${org}` });
   const get = (url: string, org = 1) => request(app).get(`/api/buyer${url}`).set(as(org));
   const post = (url: string, body: unknown, org = 1) => request(app).post(`/api/buyer${url}`).set(as(org)).send(body as object);

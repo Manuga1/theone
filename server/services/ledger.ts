@@ -36,9 +36,9 @@ type LedgerJoined = {
   campaign_name: string | null; parent_campaign_id: number | null;
 };
 
-export function readLedger(participantId: number, db: Db = graph()): ParticipantLedger {
-  const rows = db.all<LedgerJoined>(
-    `SELECT e.id, e.kind, e.occurred_at, e.memo, e.gross_cents, e.participant_cents, e.platform_cents,
+export async function readLedger(participantId: number, db: Db = graph()): Promise<ParticipantLedger> {
+  const rows = await db.all<LedgerJoined>(
+      `SELECT e.id, e.kind, e.occurred_at, e.memo, e.gross_cents, e.participant_cents, e.platform_cents,
             e.study_id, s.name AS study_name, o.name AS org_name, s.purpose,
             e.license_id, l.number AS license_number, l.term_start, l.term_end, l.revoked_at, l.scope_concepts_json AS scope_json,
             e.contribution_id, cc.name AS contribution_concept, cp.name AS campaign_name, cp.parent_campaign_id
@@ -53,7 +53,7 @@ export function readLedger(participantId: number, db: Db = graph()): Participant
        LEFT JOIN campaign cp ON cp.id = op.campaign_id
       WHERE e.participant_id = ?
       ORDER BY e.occurred_at DESC, e.id DESC`, participantId);
-  const names = conceptNames(db);
+  const names = await conceptNames(db);
   const entries: LedgerRow[] = rows.map((r) => {
     const status = r.license_id ? licenseStatus({ term_end: r.term_end!, revoked_at: r.revoked_at }) : null;
     const scope: string[] = r.scope_json ? (JSON.parse(r.scope_json) as string[]) : [];
@@ -89,15 +89,15 @@ export function readLedger(participantId: number, db: Db = graph()): Participant
     g.cents += r.participant_cents; g.count++; g.entryIds.push(r.id);
     groups.set(date, g);
   }
-  const verify = verifyCached(db);
+  const verify = await verifyCached(db);
   return {
-    lifetimeEarningsCents: lifetimeEarnings(participantId, db),
-    activeLicenses: activeLicenseCount(participantId, db),
-    licensedUses: licensedUses(participantId, db),
+    lifetimeEarningsCents: await lifetimeEarnings(participantId, db),
+    activeLicenses: await activeLicenseCount(participantId, db),
+    licensedUses: await licensedUses(participantId, db),
     entries,
     split: { participant: SPLIT.participant, platform: SPLIT.platform },
     rewardsToday: groups.get(DEMO_TODAY)?.cents ?? 0,
-    audit: { headHash: auditHead(db), ok: verify.ok, events: verify.events },
+    audit: { headHash: await auditHead(db), ok: verify.ok, events: verify.events },
     groups: Array.from(groups.values()).map((g) => ({ ...g, label: `Logging rewards · ${g.count} item${g.count === 1 ? '' : 's'}` })),
   };
 }
@@ -109,38 +109,38 @@ function rewardLeafName(memo: string): string {
   return memo.slice(REWARD_MEMO_PREFIX.length).replace(/\s*\(.*$/, '').trim();
 }
 
-export function lifetimeEarnings(participantId: number, db: Db = graph()): number {
-  return db.get<{ c: number }>('SELECT COALESCE(SUM(participant_cents), 0) AS c FROM ledger_entry WHERE participant_id = ?', participantId)?.c ?? 0;
+export async function lifetimeEarnings(participantId: number, db: Db = graph()): Promise<number> {
+  return (await db.get<{ c: number }>('SELECT COALESCE(SUM(participant_cents), 0) AS c FROM ledger_entry WHERE participant_id = ?', participantId))?.c ?? 0;
 }
 /** "Active licenses" = count(term_end > today ∧ not revoked). */
-export function activeLicenseCount(participantId: number, db: Db = graph()): number {
-  return db.get<{ c: number }>('SELECT COUNT(*) AS c FROM license WHERE participant_id = ? AND revoked_at IS NULL AND term_end > ?', participantId, DEMO_TODAY)?.c ?? 0;
+export async function activeLicenseCount(participantId: number, db: Db = graph()): Promise<number> {
+  return (await db.get<{ c: number }>('SELECT COUNT(*) AS c FROM license WHERE participant_id = ? AND revoked_at IS NULL AND term_end > ?', participantId, DEMO_TODAY))?.c ?? 0;
 }
-export function licensedUses(participantId: number, db: Db = graph()): number {
-  return db.get<{ c: number }>('SELECT COUNT(*) AS c FROM license WHERE participant_id = ? AND revoked_at IS NULL', participantId)?.c ?? 0;
+export async function licensedUses(participantId: number, db: Db = graph()): Promise<number> {
+  return (await db.get<{ c: number }>('SELECT COUNT(*) AS c FROM license WHERE participant_id = ? AND revoked_at IS NULL', participantId))?.c ?? 0;
 }
 
 /** Append a ledger row. The only writer of ledger_entry; every row also appends an audit_event in the caller's transaction. */
-export function postLedger(db: Db, row: { participantId: number; kind: 'license_fee' | 'contribution_payment'; netCents: number; occurredAt: string; studyId?: number | null; licenseId?: number | null; contributionId?: number | null; memo?: string | null }): { id: number; split: Split } {
+export async function postLedger(db: Db, row: { participantId: number; kind: 'license_fee' | 'contribution_payment'; netCents: number; occurredAt: string; studyId?: number | null; licenseId?: number | null; contributionId?: number | null; memo?: string | null }): Promise<{ id: number; split: Split }> {
   const split = fromNet(row.netCents);
-  const id = db.run(
-    'INSERT INTO ledger_entry (participant_id, kind, study_id, license_id, contribution_id, gross_cents, participant_cents, platform_cents, occurred_at, memo, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-    row.participantId, row.kind, row.studyId ?? null, row.licenseId ?? null, row.contributionId ?? null, split.gross, split.participant, split.platform, row.occurredAt, row.memo ?? null, nowIso(),
-  ).lastId;
-  appendAudit(db, {
-    participantId: row.participantId, kind: `ledger_${row.kind}`, refTable: 'ledger_entry', refId: id, at: row.occurredAt,
-    summary: `${row.kind === 'license_fee' ? 'License fee' : 'Payment'} $${(split.participant / 100).toFixed(2)} net${row.memo ? ` — ${row.memo}` : ''}`,
-    payload: { kind: row.kind, grossCents: split.gross, participantCents: split.participant, platformCents: split.platform, studyId: row.studyId ?? null, licenseId: row.licenseId ?? null, contributionId: row.contributionId ?? null, memo: row.memo ?? null },
-  });
+  const id = (await db.run(
+      'INSERT INTO ledger_entry (participant_id, kind, study_id, license_id, contribution_id, gross_cents, participant_cents, platform_cents, occurred_at, memo, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+      row.participantId, row.kind, row.studyId ?? null, row.licenseId ?? null, row.contributionId ?? null, split.gross, split.participant, split.platform, row.occurredAt, row.memo ?? null, nowIso(),
+    )).lastId;
+  await appendAudit(db, {
+        participantId: row.participantId, kind: `ledger_${row.kind}`, refTable: 'ledger_entry', refId: id, at: row.occurredAt,
+        summary: `${row.kind === 'license_fee' ? 'License fee' : 'Payment'} $${(split.participant / 100).toFixed(2)} net${row.memo ? ` — ${row.memo}` : ''}`,
+        payload: { kind: row.kind, grossCents: split.gross, participantCents: split.participant, platformCents: split.platform, studyId: row.studyId ?? null, licenseId: row.licenseId ?? null, contributionId: row.contributionId ?? null, memo: row.memo ?? null },
+      });
   return { id, split };
 }
 
 const nameCache = new WeakMap<Db, { version: number; map: Map<string, string> }>();
-export function conceptNames(db: Db = graph()): Map<string, string> {
+export async function conceptNames(db: Db = graph()): Promise<Map<string, string>> {
   const hit = nameCache.get(db);
-  if (hit && hit.version === db.writeVersion) return hit.map;
+  if (hit && hit.version === (await db.version())) return hit.map;
   const map = new Map<string, string>();
-  if (db.tableExists('concept')) for (const r of db.all<{ slug: string; name: string }>('SELECT slug, name FROM concept')) map.set(r.slug, r.name);
-  nameCache.set(db, { version: db.writeVersion, map });
+  if (await db.tableExists('concept')) for (const r of await db.all<{ slug: string; name: string }>('SELECT slug, name FROM concept')) map.set(r.slug, r.name);
+  nameCache.set(db, { version: (await db.version()), map });
   return map;
 }

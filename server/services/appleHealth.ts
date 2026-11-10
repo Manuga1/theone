@@ -13,6 +13,7 @@ import { logActivity } from './activity';
 import { rebuildCoverage } from './coverage';
 import { ingestRow, insertItem, sourceFor, toItem } from './ingest';
 import { conceptBySlug, conceptPath } from './ontology';
+import { mapSeq } from '../util/async';
 
 export const APPLE_HEALTH_MAX_BYTES = 25 * 1024 * 1024;
 
@@ -107,7 +108,7 @@ export function parseAppleHealthXml(xml: string): ParsedExport {
   return { records, byType, parsed, unmapped };
 }
 
-export function importAppleHealth(participantId: number, xml: string, db: Db = graph()): AppleHealthImportResult {
+export async function importAppleHealth(participantId: number, xml: string, db: Db = graph()): Promise<AppleHealthImportResult> {
   if (typeof xml !== 'string' || !xml.trim()) throw badRequest('xml is required (the contents of export.xml)');
   if (Buffer.byteLength(xml) > APPLE_HEALTH_MAX_BYTES) throw badRequest(`export.xml must be at most ${APPLE_HEALTH_MAX_BYTES / 1024 / 1024} MB in this model`);
   if (!/<Record\s/.test(xml) && !/<HealthData/.test(xml)) throw badRequest('this does not look like an Apple Health export.xml (no <HealthData>/<Record> elements)');
@@ -116,42 +117,42 @@ export function importAppleHealth(participantId: number, xml: string, db: Db = g
   const sha = createHash('sha256').update(xml).digest('hex');
   const bytes = Buffer.byteLength(xml);
 
-  return db.tx(() => {
-    const sourceId = sourceFor(db, participantId, 'apple_health', null, now);
-    const artifactId = db.run('INSERT INTO artifact (participant_id, source_id, kind, uri, sha256, bytes, captured_at, created_at) VALUES (?,?,?,?,?,?,?,?)', participantId, sourceId, 'apple_health_export', `apple-health://export/${sha.slice(0, 16)}`, sha, bytes, now, now).lastId;
-    const counts = new Map<string, number>();
-    let imported = 0;
-    let skipped = 0;
-    const seen = new Set<string>();
-    const existing = new Map<number, Set<string>>();
-    const itemId = insertItem(db, participantId, { kind: 'apple_health', status: 'auto_filed', filename: 'export.xml', bytes, mime: 'text/xml', sha256: sha, proposal: null, createdAt: now });
-    for (const r of parsed) {
-      const c = conceptBySlug(r.slug, db);
-      if (!c) { skipped++; continue; }
-      if (!existing.has(c.id)) {
-        existing.set(c.id, new Set(db.all<{ at: string; v: number | null }>('SELECT observed_at AS at, value_num AS v FROM observation WHERE participant_id = ? AND concept_id = ? AND deleted_at IS NULL', participantId, c.id).map((x) => `${x.at}|${x.v ?? ''}`)));
+  return await db.tx(async () => {
+      const sourceId = await sourceFor(db, participantId, 'apple_health', null, now);
+      const artifactId = (await db.run('INSERT INTO artifact (participant_id, source_id, kind, uri, sha256, bytes, captured_at, created_at) VALUES (?,?,?,?,?,?,?,?)', participantId, sourceId, 'apple_health_export', `apple-health://export/${sha.slice(0, 16)}`, sha, bytes, now, now)).lastId;
+      const counts = new Map<string, number>();
+      let imported = 0;
+      let skipped = 0;
+      const seen = new Set<string>();
+      const existing = new Map<number, Set<string>>();
+      const itemId = await insertItem(db, participantId, { kind: 'apple_health', status: 'auto_filed', filename: 'export.xml', bytes, mime: 'text/xml', sha256: sha, proposal: null, createdAt: now });
+      for (const r of parsed) {
+        const c = await conceptBySlug(r.slug, db);
+        if (!c) { skipped++; continue; }
+        if (!existing.has(c.id)) {
+          existing.set(c.id, new Set((await db.all<{ at: string; v: number | null }>('SELECT observed_at AS at, value_num AS v FROM observation WHERE participant_id = ? AND concept_id = ? AND deleted_at IS NULL', participantId, c.id)).map((x) => `${x.at}|${x.v ?? ''}`)));
+        }
+        const key = `${r.observedAt}|${r.value}`;
+        if (seen.has(`${c.id}|${key}`) || existing.get(c.id)!.has(key)) { skipped++; continue; }
+        seen.add(`${c.id}|${key}`);
+        await db.run(
+                  'INSERT INTO observation (participant_id, concept_id, value_num, value_text, value_json, unit, observed_at, source_id, method, provenance_class, provenance_rank, verification, confidence, artifact_id, classification_json, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                  participantId, c.id, r.value, r.sourceName ? `Apple Health (${r.sourceName})` : 'Apple Health', r.json ? JSON.stringify(r.json) : null, r.unit, r.observedAt, sourceId, 'import', 'connected_device', PROVENANCE_RANK.connected_device, 'verified', null, artifactId,
+                  JSON.stringify({ classifier: 'rules', confidence: 1, ingestItemId: itemId }), now);
+        counts.set(r.slug, (counts.get(r.slug) ?? 0) + 1);
+        imported++;
       }
-      const key = `${r.observedAt}|${r.value}`;
-      if (seen.has(`${c.id}|${key}`) || existing.get(c.id)!.has(key)) { skipped++; continue; }
-      seen.add(`${c.id}|${key}`);
-      db.run(
-        'INSERT INTO observation (participant_id, concept_id, value_num, value_text, value_json, unit, observed_at, source_id, method, provenance_class, provenance_rank, verification, confidence, artifact_id, classification_json, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-        participantId, c.id, r.value, r.sourceName ? `Apple Health (${r.sourceName})` : 'Apple Health', r.json ? JSON.stringify(r.json) : null, r.unit, r.observedAt, sourceId, 'import', 'connected_device', PROVENANCE_RANK.connected_device, 'verified', null, artifactId,
-        JSON.stringify({ classifier: 'rules', confidence: 1, ingestItemId: itemId }), now);
-      counts.set(r.slug, (counts.get(r.slug) ?? 0) + 1);
-      imported++;
-    }
-    const byConcept = [...counts.entries()].map(([slug, n]) => ({ conceptSlug: slug, conceptName: conceptBySlug(slug, db)?.name ?? slug, n })).sort((a, b) => b.n - a.n);
-    const top = byConcept[0] ? conceptBySlug(byConcept[0].conceptSlug, db) ?? null : null;
-    const proposal: Proposal = {
-      conceptSlug: top?.slug ?? null, conceptName: top?.name ?? null, path: top ? conceptPath(top.slug, db) : [], newConcept: null, confidence: 1,
-      rationale: `Apple Health export: ${records.toLocaleString('en-US')} records → ${imported.toLocaleString('en-US')} observations across ${byConcept.length} leaves (${skipped.toLocaleString('en-US')} duplicates/unmapped skipped)`,
-      extracted: { valueText: 'export.xml', observedAt: now, attributes: { records: String(records), imported: String(imported) } }, followUp: null, classifier: 'rules', alternatives: [],
-    };
-    db.run('UPDATE ingest_item SET concept_id = ?, observation_count = ?, proposal_json = ?, resolved_at = ? WHERE id = ?', top?.id ?? null, imported, JSON.stringify(proposal), now, itemId);
-    db.run('UPDATE source SET verified = CASE WHEN ? > 0 THEN 1 ELSE verified END, last_sync_at = ? WHERE id = ?', imported, now, sourceId);
-    if (imported > 0) rebuildCoverage(participantId, db);
-    logActivity(db, { participantId, kind: 'ingest_apple_health', text: `Apple Health export imported: ${imported.toLocaleString('en-US')} records (${byConcept.slice(0, 3).map((b) => b.conceptName).join(', ')})`, occurredAt: now });
-    return { records, imported, skipped, byConcept, artifactId: imported > 0 ? artifactId : null, item: toItem(ingestRow(itemId, participantId, db)!, db) };
-  });
+      const byConcept = (await mapSeq([...counts.entries()], async ([slug, n]) => ({ conceptSlug: slug, conceptName: (await conceptBySlug(slug, db))?.name ?? slug, n }))).sort((a, b) => b.n - a.n);
+      const top = byConcept[0] ? await conceptBySlug(byConcept[0].conceptSlug, db) ?? null : null;
+      const proposal: Proposal = {
+        conceptSlug: top?.slug ?? null, conceptName: top?.name ?? null, path: top ? await conceptPath(top.slug, db) : [], newConcept: null, confidence: 1,
+        rationale: `Apple Health export: ${records.toLocaleString('en-US')} records → ${imported.toLocaleString('en-US')} observations across ${byConcept.length} leaves (${skipped.toLocaleString('en-US')} duplicates/unmapped skipped)`,
+        extracted: { valueText: 'export.xml', observedAt: now, attributes: { records: String(records), imported: String(imported) } }, followUp: null, classifier: 'rules', alternatives: [],
+      };
+      await db.run('UPDATE ingest_item SET concept_id = ?, observation_count = ?, proposal_json = ?, resolved_at = ? WHERE id = ?', top?.id ?? null, imported, JSON.stringify(proposal), now, itemId);
+      await db.run('UPDATE source SET verified = CASE WHEN ? > 0 THEN 1 ELSE verified END, last_sync_at = ? WHERE id = ?', imported, now, sourceId);
+      if (imported > 0) await rebuildCoverage(participantId, db);
+      await logActivity(db, { participantId, kind: 'ingest_apple_health', text: `Apple Health export imported: ${imported.toLocaleString('en-US')} records (${byConcept.slice(0, 3).map((b) => b.conceptName).join(', ')})`, occurredAt: now });
+      return { records, imported, skipped, byConcept, artifactId: imported > 0 ? artifactId : null, item: await toItem((await ingestRow(itemId, participantId, db))!, db) };
+    });
 }

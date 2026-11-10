@@ -25,12 +25,12 @@ describe('the loop (scale 0.05)', () => {
   let app: ReturnType<typeof createApp>;
   let pid: number;
   const buyer = { [PERSONA_HEADER]: 'buyer:1' };
-  beforeAll(() => { t = seededDbs(); app = createApp(); pid = alexId(t.graph); });
+  beforeAll(async () => { t = await seededDbs(); app = createApp(); pid = await alexId(t.graph); });
   const pget = (url: string) => request(app).get(`/api/participant${url}`);
   const ppost = (url: string, body: unknown = {}) => request(app).post(`/api/participant${url}`).send(body as object);
   const bget = (url: string, org = 1) => request(app).get(`/api/buyer${url}`).set({ [PERSONA_HEADER]: `buyer:${org}` });
   const bpost = (url: string, body: unknown = {}, org = 1) => request(app).post(`/api/buyer${url}`).set({ [PERSONA_HEADER]: `buyer:${org}` }).send(body as object);
-  const n = (sql: string, ...p: (number | string)[]) => graph().get<{ n: number }>(sql, ...p)!.n;
+  const n = async (sql: string, ...p: (number | string)[]) => (await graph().get<{ n: number }>(sql, ...p))!.n;
 
   let studyId = 0;
   let qualityBefore = 0;
@@ -59,10 +59,10 @@ describe('the loop (scale 0.05)', () => {
     qualityBefore = d.counters.qualityAccepted;
     datasetVersionBefore = ((await bget(`/datasets/${s.datasetId}`).expect(200)).body as Dataset).version;
     // a T4 completer: BP protocol verified (14 d) while the historical branch (≥ 365 d device) fails
-    const bp = t.graph.get<{ id: number }>("SELECT id FROM concept WHERE slug = 'physiology.cardiovascular.blood_pressure'")!.id;
-    const cov = t.graph.get<{ span_days: number; best_prov_rank: number; protocol_days: number; n_obs: number }>(
-      `SELECT cv.span_days, cv.best_prov_rank, cv.protocol_days, cv.n_obs FROM opportunity op JOIN participant p ON p.id = op.participant_id JOIN participant_coverage cv ON cv.participant_id = p.id AND cv.concept_id = ?
-        WHERE op.status = 'paid' AND p.tier = 4 ORDER BY op.id LIMIT 1`, bp)!;
+    const bp = (await t.graph.get<{ id: number }>("SELECT id FROM concept WHERE slug = 'physiology.cardiovascular.blood_pressure'"))!.id;
+    const cov = (await t.graph.get<{ span_days: number; best_prov_rank: number; protocol_days: number; n_obs: number }>(
+          `SELECT cv.span_days, cv.best_prov_rank, cv.protocol_days, cv.n_obs FROM opportunity op JOIN participant p ON p.id = op.participant_id JOIN participant_coverage cv ON cv.participant_id = p.id AND cv.concept_id = ?
+        WHERE op.status = 'paid' AND p.tier = 4 ORDER BY op.id LIMIT 1`, bp))!;
     const like = { spanDays: cov.span_days, bestProvRank: cov.best_prov_rank, protocolDays: cov.protocol_days, nObs: cov.n_obs };
     expect(satisfiesProtocol(like, { method: 'device', durationDays: 14, minProvRank: 3 })).toBe(true);
     expect(satisfiesHistorical(like, { minSpanDays: 365, minProvRank: 3 })).toBe(false);
@@ -81,14 +81,14 @@ describe('the loop (scale 0.05)', () => {
     expect(pv.estimate.contacts).toBeGreaterThan(0);
     const before = ((await pget('/sources')).body as ParticipantSources).missing.find((m) => m.slug === MICROBIOME)!;
     expect(before.action).toBe('watching');
-    const licensesBefore = n('SELECT COUNT(*) AS n FROM license');
+    const licensesBefore = await n('SELECT COUNT(*) AS n FROM license');
     const r = (await bpost(`/studies/${studyId}/variables`, { concept: MICROBIOME, protocol: { method: 'kit', durationDays: 1 }, minProvRank: 3, targetN: 50, compCents: 9000 }).expect(201)).body as VariableRequestResult;
     expect(r.conceptSlug).toBe(MICROBIOME);
     expect(r.campaign.status).toBe('active');
     expect(r.campaign.parentCampaignId).toBeTypeOf('number');
     expect(r.offered).toBeGreaterThanOrEqual(r.campaign.estimate.contacts);
     expect(r.watchersNotified).toBe(1);
-    expect(n('SELECT COUNT(*) AS n FROM license')).toBe(licensesBefore); // offers never mint licenses
+    expect((await n('SELECT COUNT(*) AS n FROM license'))).toBe(licensesBefore); // offers never mint licenses
     childCampaignId = r.campaign.id;
     const home = (await pget('/home').expect(200)).body as ParticipantHome;
     expect(home.opportunities.count).toBe(5);
@@ -157,7 +157,7 @@ describe('the loop (scale 0.05)', () => {
     expect(node.state).toBe('verified');
     // research use: the license gained a (0¢) line for the newly scoped concept and the payment counts toward the node's earnings
     expect(node.research).toMatchObject({ licenses: 1, earningsCents: 9000 });
-    expect(n('SELECT COUNT(*) AS n FROM license_line ll JOIN concept k ON k.id = ll.concept_id WHERE ll.license_id = ? AND k.slug = ?', microLicenseId, MICROBIOME)).toBe(1);
+    expect((await n('SELECT COUNT(*) AS n FROM license_line ll JOIN concept k ON k.id = ll.concept_id WHERE ll.license_id = ? AND k.slug = ?', microLicenseId, MICROBIOME))).toBe(1);
     expect(node.summary.provenanceClass).toBe('protocol_measurement');
     expect(node.summary.verification).toBe('Protocol verified');
     expect(node.rawVsDerived.artifactCount).toBe(1);
@@ -224,7 +224,7 @@ describe('the loop (scale 0.05)', () => {
     const proposed = (await bpost(`/campaigns/${draft.id}/request-proposal`).expect(200)).body as Campaign;
     expect(proposed.status).toBe('proposal_requested');
     await bpost(`/campaigns/${draft.id}/request-proposal`).expect(409);
-    const licenses = n('SELECT COUNT(*) AS n FROM license');
+    const licenses = await n('SELECT COUNT(*) AS n FROM license');
     const launched = (await bpost(`/campaigns/${draft.id}/launch`).expect(200)).body as Campaign;
     expect(launched.status).toBe('active');
     expect(launched.launchedAt).toBeTruthy();
@@ -232,18 +232,18 @@ describe('the loop (scale 0.05)', () => {
     // reuse-only offers reach every ready-now member (reuse variable present); only members who PRE-AUTHORISED reuse-only licenses accept at once
     const reuseOnly = launched.estimate.reuseOnlyOffered!;
     expect(reuseOnly).toBeGreaterThan(1);
-    expect(n("SELECT COUNT(*) AS n FROM opportunity WHERE campaign_id = ? AND missing_concepts_json = '[]'", draft.id)).toBe(reuseOnly);
-    const preauth = n("SELECT COUNT(*) AS n FROM opportunity op JOIN consent_setting cs ON cs.participant_id = op.participant_id WHERE op.campaign_id = ? AND op.missing_concepts_json = '[]' AND cs.preauthorize_reuse_only = 1 AND op.participant_id <> ?", draft.id, pid);
-    expect(n("SELECT COUNT(*) AS n FROM opportunity WHERE campaign_id = ? AND status = 'paid'", draft.id)).toBe(preauth);
-    expect(n('SELECT COUNT(*) AS n FROM license')).toBe(licenses + preauth); // an OFFER never mints a license
-    expect(n("SELECT COUNT(*) AS n FROM opportunity WHERE campaign_id = ? AND status = 'offered'", draft.id)).toBe(launched.estimate.contacts + reuseOnly - preauth);
-    expect(n("SELECT COUNT(*) AS n FROM opportunity WHERE campaign_id = ? AND status NOT IN ('offered','paid')", draft.id)).toBe(0);
+    expect((await n("SELECT COUNT(*) AS n FROM opportunity WHERE campaign_id = ? AND missing_concepts_json = '[]'", draft.id))).toBe(reuseOnly);
+    const preauth = await n("SELECT COUNT(*) AS n FROM opportunity op JOIN consent_setting cs ON cs.participant_id = op.participant_id WHERE op.campaign_id = ? AND op.missing_concepts_json = '[]' AND cs.preauthorize_reuse_only = 1 AND op.participant_id <> ?", draft.id, pid);
+    expect((await n("SELECT COUNT(*) AS n FROM opportunity WHERE campaign_id = ? AND status = 'paid'", draft.id))).toBe(preauth);
+    expect((await n('SELECT COUNT(*) AS n FROM license'))).toBe(licenses + preauth); // an OFFER never mints a license
+    expect((await n("SELECT COUNT(*) AS n FROM opportunity WHERE campaign_id = ? AND status = 'offered'", draft.id))).toBe(launched.estimate.contacts + reuseOnly - preauth);
+    expect((await n("SELECT COUNT(*) AS n FROM opportunity WHERE campaign_id = ? AND status NOT IN ('offered','paid')", draft.id))).toBe(0);
     // Alex (ready-now, not pre-authorised) holds the FIRST reuse-only offer: nothing to collect, compensation = Σ reuse fees of
     // the reuse variable (EHR 1,200) AND of the collect_if_missing variables he already holds (exome 2,000 + BP 1,400 + food log 825)
     const REUSE_ONLY_FEE = 1200 + 2000 + 1400 + 825;
-    const alexOpp = t.graph.get<{ id: number; status: string; comp: number; missing: string }>("SELECT id, status, comp_max_cents AS comp, missing_concepts_json AS missing FROM opportunity WHERE campaign_id = ? AND participant_id = ?", draft.id, pid)!;
+    const alexOpp = (await t.graph.get<{ id: number; status: string; comp: number; missing: string }>("SELECT id, status, comp_max_cents AS comp, missing_concepts_json AS missing FROM opportunity WHERE campaign_id = ? AND participant_id = ?", draft.id, pid))!;
     expect(alexOpp).toMatchObject({ status: 'offered', comp: REUSE_ONLY_FEE, missing: '[]' });
-    expect(alexOpp.id).toBe(n("SELECT MIN(id) AS n FROM opportunity WHERE campaign_id = ? AND missing_concepts_json = '[]'", draft.id));
+    expect(alexOpp.id).toBe((await n("SELECT MIN(id) AS n FROM opportunity WHERE campaign_id = ? AND missing_concepts_json = '[]'", draft.id)));
     const avail = (await pget('/opportunities?tab=available')).body as ParticipantOpportunities;
     const card = avail.items.find((o) => o.id === alexOpp.id)!;
     expect(card).toMatchObject({ title: 'Loop campaign', compCents: REUSE_ONLY_FEE, requirements: [], reused: ['EHR history', 'Exome', 'Blood Pressure', 'Food log'] });
@@ -255,12 +255,12 @@ describe('the loop (scale 0.05)', () => {
     const earnings = ((await pget('/ledger')).body as ParticipantLedger).lifetimeEarningsCents;
     const acc = (await ppost(`/opportunities/${alexOpp.id}/accept`).expect(200)).body as AcceptResult;
     expect(acc.contributionIds).toEqual([]);
-    expect(n('SELECT COUNT(*) AS n FROM license')).toBe(licenses + preauth + 1);
+    expect((await n('SELECT COUNT(*) AS n FROM license'))).toBe(licenses + preauth + 1);
     const led = (await pget('/ledger')).body as ParticipantLedger;
     expect(led.entries[0]).toMatchObject({ kind: 'license_fee', licenseId: acc.licenseId, participantCents: REUSE_ONLY_FEE, grossCents: 6028, platformCents: 603, dataIncluded: ['EHR history', 'Exome', 'Blood Pressure', 'Food log'], studyName: 'Loop campaign' });
     expect(led.lifetimeEarningsCents).toBe(earnings + REUSE_ONLY_FEE);
-    expect(n('SELECT COUNT(*) AS n FROM license_line WHERE license_id = ?', acc.licenseId)).toBe(4);
-    expect(t.graph.get<{ status: string }>('SELECT status FROM opportunity WHERE id = ?', alexOpp.id)!.status).toBe('paid'); // reuse-only: paid at accept, no contributions
+    expect((await n('SELECT COUNT(*) AS n FROM license_line WHERE license_id = ?', acc.licenseId))).toBe(4);
+    expect((await t.graph.get<{ status: string }>('SELECT status FROM opportunity WHERE id = ?', alexOpp.id))!.status).toBe('paid'); // reuse-only: paid at accept, no contributions
     expect(((await pget('/opportunities?tab=past')).body as ParticipantOpportunities).items.find((o) => o.id === alexOpp.id)!.status).toBe('paid');
     await bpost(`/campaigns/${draft.id}/launch`).expect(409);
     expect(((await bget(`/campaigns/${draft.id}`).expect(200)).body as Campaign).status).toBe('active');
@@ -275,8 +275,8 @@ describe('the loop (scale 0.05)', () => {
 
   it('revoke is forward-only over HTTP: ledger rows and built dataset members stay; the next refresh drops Alex', async () => {
     const d = (await bget(`/studies/${studyId}`)).body as StudyDetail;
-    const members = n('SELECT COUNT(*) AS n FROM dataset_member WHERE dataset_id = ?', d.datasetId!);
-    expect(n('SELECT COUNT(*) AS n FROM dataset_member WHERE dataset_id = ? AND participant_id = ?', d.datasetId!, pid)).toBe(1);
+    const members = await n('SELECT COUNT(*) AS n FROM dataset_member WHERE dataset_id = ?', d.datasetId!);
+    expect((await n('SELECT COUNT(*) AS n FROM dataset_member WHERE dataset_id = ? AND participant_id = ?', d.datasetId!, pid))).toBe(1);
     const before = (await pget('/ledger')).body as ParticipantLedger;
     await ppost(`/licenses/${microLicenseId}/revoke`).expect(200);
     await ppost(`/licenses/${microLicenseId}/revoke`).expect(409);
@@ -286,7 +286,7 @@ describe('the loop (scale 0.05)', () => {
     expect(after.lifetimeEarningsCents).toBe(before.lifetimeEarningsCents);
     expect(after.entries.find((e) => e.licenseId === microLicenseId)!.licenseStatus).toBe('revoked');
     expect(after.activeLicenses).toBe(before.activeLicenses - 1);
-    expect(n('SELECT COUNT(*) AS n FROM dataset_member WHERE dataset_id = ?', d.datasetId!)).toBe(members);
+    expect((await n('SELECT COUNT(*) AS n FROM dataset_member WHERE dataset_id = ?', d.datasetId!))).toBe(members);
     const refreshed = (await bpost(`/datasets/${d.datasetId}/refresh`).expect(200)).body as { version: number; dropped: number; memberCount: number };
     expect(refreshed.dropped).toBe(1);
     expect(refreshed.memberCount).toBe(members - 1);
@@ -319,7 +319,7 @@ describe('the loop (scale 0.05)', () => {
 
   it('advance moves bulk opportunities (never Alex); recontact replaces the stale ones', async () => {
     const before = (await bget(`/studies/${studyId}`)).body as StudyDetail;
-    const alexOpp = t.graph.get<{ status: string }>("SELECT status FROM opportunity WHERE participant_id = ? AND campaign_id = (SELECT id FROM campaign WHERE name = 'Metabolic Monitoring Study')", pid)!.status;
+    const alexOpp = (await t.graph.get<{ status: string }>("SELECT status FROM opportunity WHERE participant_id = ? AND campaign_id = (SELECT id FROM campaign WHERE name = 'Metabolic Monitoring Study')", pid))!.status;
     const adv = (await bpost(`/studies/${studyId}/advance`, { days: 14 }).expect(200)).body as AdvanceResult;
     expect(adv.days).toBe(14);
     expect(adv.totalDays).toBe(14);
@@ -327,26 +327,26 @@ describe('the loop (scale 0.05)', () => {
     expect(adv.completions).toBeGreaterThan(0);
     expect(adv.counters.started).toBeGreaterThan(before.counters.started);
     expect(adv.datasetVersion).toBeGreaterThan(0);
-    expect(t.graph.get<{ status: string }>("SELECT status FROM opportunity WHERE participant_id = ? AND campaign_id = (SELECT id FROM campaign WHERE name = 'Metabolic Monitoring Study')", pid)!.status).toBe(alexOpp);
+    expect((await t.graph.get<{ status: string }>("SELECT status FROM opportunity WHERE participant_id = ? AND campaign_id = (SELECT id FROM campaign WHERE name = 'Metabolic Monitoring Study')", pid))!.status).toBe(alexOpp);
     expect(((await bget(`/studies/${studyId}`)).body as StudyDetail).lastAdvancedDays).toBe(14);
     await bpost(`/studies/${studyId}/advance`, { days: 0 }).expect(400);
     // every bulk acceptance produced exactly one license + one ledger row; every verified contribution one payment row
-    expect(n('SELECT COUNT(*) AS n FROM license')).toBe(n('SELECT COUNT(*) AS n FROM enrollment') + 1); // + Alex's reuse-only #1842 (no enrollment)
-    expect(n("SELECT COUNT(*) AS n FROM ledger_entry WHERE kind = 'contribution_payment'")).toBe(n("SELECT COUNT(*) AS n FROM contribution WHERE status = 'verified'"));
-    const need = n(`SELECT COUNT(*) AS n FROM opportunity op JOIN campaign c ON c.id = op.campaign_id WHERE c.study_id = ? AND op.status IN ('declined','rejected','expired','withdrawn') AND (op.status <> 'declined' OR op.viewed_at IS NOT NULL)`, studyId);
+    expect((await n('SELECT COUNT(*) AS n FROM license'))).toBe(await n('SELECT COUNT(*) AS n FROM enrollment') + 1); // + Alex's reuse-only #1842 (no enrollment)
+    expect((await n("SELECT COUNT(*) AS n FROM ledger_entry WHERE kind = 'contribution_payment'"))).toBe((await n("SELECT COUNT(*) AS n FROM contribution WHERE status = 'verified'")));
+    const need = await n(`SELECT COUNT(*) AS n FROM opportunity op JOIN campaign c ON c.id = op.campaign_id WHERE c.study_id = ? AND op.status IN ('declined','rejected','expired','withdrawn') AND (op.status <> 'declined' OR op.viewed_at IS NOT NULL)`, studyId);
     expect(need).toBeGreaterThan(0);
-    const invited = n('SELECT COUNT(*) AS n FROM opportunity op JOIN campaign c ON c.id = op.campaign_id WHERE c.study_id = ?', studyId);
+    const invited = await n('SELECT COUNT(*) AS n FROM opportunity op JOIN campaign c ON c.id = op.campaign_id WHERE c.study_id = ?', studyId);
     const rootBefore = ((await bget(`/studies/${studyId}`)).body as StudyDetail).counters;
-    const statusesBefore = t.graph.all<{ id: number; status: string }>(`SELECT id, status FROM opportunity WHERE campaign_id IN (SELECT id FROM campaign WHERE study_id = ?) AND status IN ('declined','rejected','expired','withdrawn') ORDER BY id`, studyId);
+    const statusesBefore = await t.graph.all<{ id: number; status: string }>(`SELECT id, status FROM opportunity WHERE campaign_id IN (SELECT id FROM campaign WHERE study_id = ?) AND status IN ('declined','rejected','expired','withdrawn') ORDER BY id`, studyId);
     const rc = (await bpost(`/studies/${studyId}/recontact`).expect(200)).body as RecontactResult;
     expect(rc.replaced).toBe(need);
     expect(rc.offered).toBe(need);
     expect(rc.counters.needReplacement).toBe(0);
-    expect(n('SELECT COUNT(*) AS n FROM opportunity op JOIN campaign c ON c.id = op.campaign_id WHERE c.study_id = ?', studyId)).toBe(invited + need);
+    expect((await n('SELECT COUNT(*) AS n FROM opportunity op JOIN campaign c ON c.id = op.campaign_id WHERE c.study_id = ?', studyId))).toBe(invited + need);
     // the originals keep their terminal status (no 'replaced' rewrite) and point at their replacement; started / completed never move backwards
-    expect(n("SELECT COUNT(*) AS n FROM opportunity WHERE replaced_by_id IS NOT NULL")).toBe(need);
-    expect(n("SELECT COUNT(*) AS n FROM opportunity WHERE status = 'replaced'")).toBe(0);
-    expect(t.graph.all<{ id: number; status: string }>(`SELECT id, status FROM opportunity WHERE id IN (${statusesBefore.map(() => '?').join(',')}) ORDER BY id`, ...statusesBefore.map((r) => r.id))).toEqual(statusesBefore);
+    expect((await n("SELECT COUNT(*) AS n FROM opportunity WHERE replaced_by_id IS NOT NULL"))).toBe(need);
+    expect((await n("SELECT COUNT(*) AS n FROM opportunity WHERE status = 'replaced'"))).toBe(0);
+    expect((await t.graph.all<{ id: number; status: string }>(`SELECT id, status FROM opportunity WHERE id IN (${statusesBefore.map(() => '?').join(',')}) ORDER BY id`, ...statusesBefore.map((r) => r.id)))).toEqual(statusesBefore);
     expect(rc.counters).toMatchObject({ started: rootBefore.started, completed: rootBefore.completed, accepted: rootBefore.accepted, qualityAccepted: rootBefore.qualityAccepted });
     expect(rc.counters.invited).toBeGreaterThan(rootBefore.invited);
     await bpost(`/studies/${studyId}/recontact`).expect(409);

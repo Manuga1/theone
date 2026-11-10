@@ -12,12 +12,13 @@ import { computeCompleteness, overlays } from './completeness';
 import { rebuildCoverage } from './coverage';
 import { conceptBySlug, leaves } from './ontology';
 import { generateInitialSync } from './simulate';
+import { mapSeq } from '../util/async';
 
 type SourceRow = { id: number; kind: string; vendor: string; label: string; action_label: string; status: SourceCard['status']; connected_at: string | null; last_sync_at: string | null; verified: number };
 
-export function listSources(participantId: number, db: Db = graph()): SourceCard[] {
-  if (!db.tableExists('source')) return [];
-  return db.all<SourceRow>('SELECT id, kind, vendor, label, action_label, status, connected_at, last_sync_at, verified FROM source WHERE participant_id = ? ORDER BY sort_order, id', participantId)
+export async function listSources(participantId: number, db: Db = graph()): Promise<SourceCard[]> {
+  if (!await db.tableExists('source')) return [];
+  return (await db.all<SourceRow>('SELECT id, kind, vendor, label, action_label, status, connected_at, last_sync_at, verified FROM source WHERE participant_id = ? ORDER BY sort_order, id', participantId))
     .map((s) => ({ id: s.id, kind: s.kind, label: s.label, vendor: s.vendor, actionLabel: s.action_label, status: s.status, verified: !!s.verified, connectedAt: s.connected_at, lastSyncAt: s.last_sync_at, lastSyncRelative: s.last_sync_at && s.status === 'connected' ? relative(s.last_sync_at) : null, ...sourceExtras(s) }));
 }
 
@@ -43,19 +44,19 @@ export function sourceExtras(s: Pick<SourceRow, 'kind' | 'status' | 'last_sync_a
 }
 
 /** "Verified sources" = connected ∧ verified. */
-export function verifiedSourceCount(participantId: number, db: Db = graph()): number {
-  if (!db.tableExists('source')) return 0;
-  return db.get<{ n: number }>("SELECT COUNT(*) AS n FROM source WHERE participant_id = ? AND status = 'connected' AND verified = 1", participantId)?.n ?? 0;
+export async function verifiedSourceCount(participantId: number, db: Db = graph()): Promise<number> {
+  if (!await db.tableExists('source')) return 0;
+  return (await db.get<{ n: number }>("SELECT COUNT(*) AS n FROM source WHERE participant_id = ? AND status = 'connected' AND verified = 1", participantId))?.n ?? 0;
 }
 
 /** Enrichable leaves that are not verified, with the action the UI should offer. */
-export function missingDimensions(participantId: number, db: Db = graph()): MissingDimension[] {
-  if (!db.tableExists('concept')) return [];
-  const comp = computeCompleteness(participantId, undefined, db);
-  const ov = overlays(participantId, db);
-  const watched = new Set(db.all<{ slug: string }>('SELECT k.slug FROM demand_watch w JOIN concept k ON k.id = w.concept_id WHERE w.participant_id = ?', participantId).map((r) => r.slug));
+export async function missingDimensions(participantId: number, db: Db = graph()): Promise<MissingDimension[]> {
+  if (!await db.tableExists('concept')) return [];
+  const comp = await computeCompleteness(participantId, undefined, db);
+  const ov = await overlays(participantId, db);
+  const watched = new Set((await db.all<{ slug: string }>('SELECT k.slug FROM demand_watch w JOIN concept k ON k.id = w.concept_id WHERE w.participant_id = ?', participantId)).map((r) => r.slug));
   const out: MissingDimension[] = [];
-  for (const c of leaves(db)) {
+  for (const c of await leaves(db)) {
     if (!c.enrichable || !c.in_list) continue;
     const state = comp.leaves.get(c.slug)?.state ?? 'missing';
     if (state === 'verified') continue;
@@ -70,8 +71,8 @@ export function missingDimensions(participantId: number, db: Db = graph()): Miss
   return out.sort((a, b) => rank(a) - rank(b));
 }
 
-export function participantSources(participantId: number, db: Db = graph()): ParticipantSources {
-  return { sources: listSources(participantId, db), missing: missingDimensions(participantId, db) };
+export async function participantSources(participantId: number, db: Db = graph()): Promise<ParticipantSources> {
+  return { sources: await listSources(participantId, db), missing: await missingDimensions(participantId, db) };
 }
 
 /**
@@ -79,67 +80,67 @@ export function participantSources(participantId: number, db: Db = graph()): Par
  * runs a small deterministic initial sync (connected-device provenance) for the concepts it feeds. Coverage is rebuilt
  * and the source is verified only when it actually holds data.
  */
-export function connectSource(participantId: number, sourceId: number, db: Db = graph()): { observations: number; synced: string[] } {
-  const s = db.get<SourceRow>('SELECT * FROM source WHERE id = ? AND participant_id = ?', sourceId, participantId);
+export async function connectSource(participantId: number, sourceId: number, db: Db = graph()): Promise<{ observations: number; synced: string[] }> {
+  const s = await db.get<SourceRow>('SELECT * FROM source WHERE id = ? AND participant_id = ?', sourceId, participantId);
   if (!s) throw notFound('source');
   const now = nowIso();
-  return db.tx(() => {
-    db.run('UPDATE observation SET deleted_at = NULL WHERE participant_id = ? AND source_id = ? AND deleted_at IS NOT NULL', participantId, sourceId);
-    let synced: string[] = [];
-    let generated = 0;
-    const existing = db.get<{ n: number }>('SELECT COUNT(*) AS n FROM observation WHERE participant_id = ? AND source_id = ? AND deleted_at IS NULL', participantId, sourceId)?.n ?? 0;
-    if (existing === 0) {
-      const r = generateInitialSync(db, participantId, { id: sourceId, kind: s.kind }, now);
-      synced = r.concepts;
-      generated = r.observations;
-    }
-    const hasData = existing + generated > 0;
-    db.run("UPDATE source SET status = 'connected', verified = ?, connected_at = COALESCE(connected_at, ?), last_sync_at = ? WHERE id = ?", hasData ? 1 : 0, now, now, sourceId);
-    rebuildCoverage(participantId, db);
-    const names = synced.map((slug) => conceptBySlug(slug, db)?.name ?? slug);
-    logActivity(db, { participantId, kind: 'source_connected', text: `${s.label} connected (${s.vendor})${generated ? ` — initial sync: ${generated.toLocaleString('en-US')} records (${names.join(', ')})` : existing ? ' — data restored' : ''}`, occurredAt: now });
-    return { observations: existing + generated, synced };
-  });
+  return await db.tx(async () => {
+      await db.run('UPDATE observation SET deleted_at = NULL WHERE participant_id = ? AND source_id = ? AND deleted_at IS NOT NULL', participantId, sourceId);
+      let synced: string[] = [];
+      let generated = 0;
+      const existing = (await db.get<{ n: number }>('SELECT COUNT(*) AS n FROM observation WHERE participant_id = ? AND source_id = ? AND deleted_at IS NULL', participantId, sourceId))?.n ?? 0;
+      if (existing === 0) {
+        const r = await generateInitialSync(db, participantId, { id: sourceId, kind: s.kind }, now);
+        synced = r.concepts;
+        generated = r.observations;
+      }
+      const hasData = existing + generated > 0;
+      await db.run("UPDATE source SET status = 'connected', verified = ?, connected_at = COALESCE(connected_at, ?), last_sync_at = ? WHERE id = ?", hasData ? 1 : 0, now, now, sourceId);
+      await rebuildCoverage(participantId, db);
+      const names = await mapSeq(synced, async (slug) => (await conceptBySlug(slug, db))?.name ?? slug);
+      await logActivity(db, { participantId, kind: 'source_connected', text: `${s.label} connected (${s.vendor})${generated ? ` — initial sync: ${generated.toLocaleString('en-US')} records (${names.join(', ')})` : existing ? ' — data restored' : ''}`, occurredAt: now });
+      return { observations: existing + generated, synced };
+    });
 }
 
 /** Disconnect = soft-delete that source's observations (deleted_at) and rebuild coverage. Built datasets are untouched. */
-export function disconnectSource(participantId: number, sourceId: number, db: Db = graph()): void {
-  const s = db.get<SourceRow>('SELECT * FROM source WHERE id = ? AND participant_id = ?', sourceId, participantId);
+export async function disconnectSource(participantId: number, sourceId: number, db: Db = graph()): Promise<void> {
+  const s = await db.get<SourceRow>('SELECT * FROM source WHERE id = ? AND participant_id = ?', sourceId, participantId);
   if (!s) throw notFound('source');
   const now = nowIso();
-  db.tx(() => {
-    db.run("UPDATE source SET status = 'disconnected' WHERE id = ?", sourceId);
-    const hidden = db.run('UPDATE observation SET deleted_at = ? WHERE participant_id = ? AND source_id = ? AND deleted_at IS NULL', now, participantId, sourceId).changes;
-    rebuildCoverage(participantId, db);
-    appendAudit(db, { participantId, kind: 'source_disconnected', refTable: 'source', refId: sourceId, at: now, summary: `${s.label} (${s.vendor}) disconnected — ${hidden} records no longer shared`, payload: { kind: s.kind, observationsHidden: hidden } });
-    logActivity(db, { participantId, kind: 'source_disconnected', text: `${s.label} disconnected — its data is no longer shared`, occurredAt: now });
-  });
+  await db.tx(async () => {
+        await db.run("UPDATE source SET status = 'disconnected' WHERE id = ?", sourceId);
+        const hidden = (await db.run('UPDATE observation SET deleted_at = ? WHERE participant_id = ? AND source_id = ? AND deleted_at IS NULL', now, participantId, sourceId)).changes;
+        await rebuildCoverage(participantId, db);
+        await appendAudit(db, { participantId, kind: 'source_disconnected', refTable: 'source', refId: sourceId, at: now, summary: `${s.label} (${s.vendor}) disconnected — ${hidden} records no longer shared`, payload: { kind: s.kind, observationsHidden: hidden } });
+        await logActivity(db, { participantId, kind: 'source_disconnected', text: `${s.label} disconnected — its data is no longer shared`, occurredAt: now });
+      });
 }
 
-export function watchConcept(participantId: number, slug: string, db: Db = graph()): void {
-  const c = conceptBySlug(slug, db);
+export async function watchConcept(participantId: number, slug: string, db: Db = graph()): Promise<void> {
+  const c = await conceptBySlug(slug, db);
   if (!c) throw notFound('concept');
-  db.tx(() => {
-    db.run('INSERT OR IGNORE INTO demand_watch (participant_id, concept_id, created_at) VALUES (?,?,?)', participantId, c.id, nowIso());
-  });
+  await db.tx(async () => {
+        await db.run('INSERT OR IGNORE INTO demand_watch (participant_id, concept_id, created_at) VALUES (?,?,?)', participantId, c.id, nowIso());
+      });
 }
 
-export function selfReport(participantId: number, slug: string, input: SelfReportInput, db: Db = graph()): number {
-  const c = conceptBySlug(slug, db);
+export async function selfReport(participantId: number, slug: string, input: SelfReportInput, db: Db = graph()): Promise<number> {
+  const c = await conceptBySlug(slug, db);
   if (!c || c.level !== 'leaf') throw notFound('concept');
   if (input.value === undefined || input.value === null || input.value === '') throw badRequest('value is required');
   const now = nowIso();
-  const manual = db.get<{ id: number }>("SELECT id FROM source WHERE participant_id = ? AND kind = 'self_report' LIMIT 1", participantId);
-  return db.tx(() => {
-    const sourceId = manual?.id ?? db.run("INSERT INTO source (participant_id, kind, vendor, label, action_label, status, connected_at, last_sync_at, verified, sort_order, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-      participantId, 'self_report', 'Manual entry', 'Self-reported', 'Add data', 'connected', now, now, 0, 99, now).lastId;
-    const num = typeof input.value === 'number' ? input.value : Number.isFinite(Number(input.value)) ? Number(input.value) : null;
-    const id = db.run(
-      'INSERT INTO observation (participant_id, concept_id, value_num, value_text, value_json, unit, observed_at, source_id, method, provenance_class, provenance_rank, verification, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
-      participantId, c.id, num, num === null ? String(input.value) : input.note ?? null, null, input.unit ?? c.unit, now, sourceId, 'self_report', 'self_report', PROVENANCE_RANK.self_report, 'self_reported', now).lastId;
-    db.run('UPDATE source SET last_sync_at = ? WHERE id = ?', now, sourceId);
-    rebuildCoverage(participantId, db);
-    logActivity(db, { participantId, kind: 'self_report', text: `${c.name} added (self-reported)`, occurredAt: now });
-    return id;
-  });
+  const manual = await db.get<{ id: number }>("SELECT id FROM source WHERE participant_id = ? AND kind = 'self_report' LIMIT 1", participantId);
+  return await db.tx(async () => {
+      const sourceId = manual?.id ?? (await db.run("INSERT INTO source (participant_id, kind, vendor, label, action_label, status, connected_at, last_sync_at, verified, sort_order, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            participantId, 'self_report', 'Manual entry', 'Self-reported', 'Add data', 'connected', now, now, 0, 99, now)).lastId;
+      const num = typeof input.value === 'number' ? input.value : Number.isFinite(Number(input.value)) ? Number(input.value) : null;
+      const id = (await db.run(
+            'INSERT INTO observation (participant_id, concept_id, value_num, value_text, value_json, unit, observed_at, source_id, method, provenance_class, provenance_rank, verification, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            participantId, c.id, num, num === null ? String(input.value) : input.note ?? null, null, input.unit ?? c.unit, now, sourceId, 'self_report', 'self_report', PROVENANCE_RANK.self_report, 'self_reported', now)).lastId;
+      await db.run('UPDATE source SET last_sync_at = ? WHERE id = ?', now, sourceId);
+      await rebuildCoverage(participantId, db);
+      await logActivity(db, { participantId, kind: 'self_report', text: `${c.name} added (self-reported)`, occurredAt: now });
+      return id;
+    });
 }

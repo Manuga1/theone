@@ -21,7 +21,7 @@ function walk(dir: string): string[] {
 
 describe('no identity leak on the buyer side', () => {
   let app: ReturnType<typeof createApp>;
-  beforeAll(() => { seededDbs(); app = createApp(); });
+  beforeAll(async () => { await seededDbs(); app = createApp(); });
 
   it('every buyer endpoint response is free of forbidden keys (deep)', async () => {
     const h = { [PERSONA_HEADER]: 'buyer:1' };

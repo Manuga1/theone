@@ -1,22 +1,40 @@
-// The health graph database: pseudonymous participants, ontology, observations, consent, licenses, ledger, marketplace.
-// Contains NO direct identifiers. Buyer routes may import this module only.
-import { Db } from './driver';
-import { GRAPH_PATH } from './paths';
-import { ensureWritableCopy } from './bootstrap';
-import { migrateGraph } from './migrate';
+// The database handle. Production: Supabase Postgres (DATABASE_URL / POSTGRES_URL). Local dev: PGlite under data/pglite.
+// Tests and the seed inject their own handle with useGraph(). Buyer routes may import this module only (never vault.ts).
+import { Db, PgDb, PgliteDb } from './driver';
+import { databaseUrl, PGLITE_DIR } from './paths';
+import { migrate } from './migrate';
 
 let instance: Db | null = null;
+let opening: Promise<Db> | null = null;
 
+/** The open handle. With a DATABASE_URL it opens lazily (a pool connects on first query); otherwise openGraph() must have run. */
 export function graph(): Db {
   if (!instance) {
-    ensureWritableCopy(GRAPH_PATH);
-    instance = new Db(GRAPH_PATH);
-    // idempotent: CREATE IF NOT EXISTS + additive ALTERs + missing canonical concepts (a stale dev data/ keeps working)
-    migrateGraph(instance);
+    const url = databaseUrl();
+    if (!url) throw new Error('database not open (call openGraph() first)');
+    instance = new PgDb(url);
   }
   return instance;
 }
-/** Tests and the seed inject their own handle. */
+
+/** Opens (once) the configured database. Local PGlite databases get the schema applied so an unseeded app still runs. */
+export function openGraph(): Promise<Db> {
+  if (instance) return Promise.resolve(instance);
+  opening ??= (async () => {
+    const url = databaseUrl();
+    let db: Db;
+    if (url) db = new PgDb(url);
+    else {
+      db = await PgliteDb.open(PGLITE_DIR);
+      await migrate(db);
+    }
+    instance = db;
+    return db;
+  })().finally(() => { opening = null; });
+  return opening;
+}
+
+/** Tests and the seed inject their own handle (pass null to forget it). */
 export function useGraph(db: Db | null): void {
   instance = db;
 }
