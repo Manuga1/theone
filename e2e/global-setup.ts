@@ -27,7 +27,7 @@ export async function waitForApi(timeoutMs = 240_000): Promise<void> {
   }
 }
 
-/** POST /api/demo/reset (full scale) — rebuilds data/ in-process in ~15 s and leaves the server running. */
+/** POST /api/demo/reset — restores the seed snapshot in the database and leaves the server running. */
 export async function resetDemo(): Promise<void> {
   const ctx = await request.newContext();
   try {

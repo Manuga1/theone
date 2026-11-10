@@ -9,11 +9,11 @@ export type CoverageRow = {
   best_prov_rank: number; verified_n: number; self_report_n: number; last_value_num: number | null; protocol_days: number;
 };
 
-export function rebuildCoverage(participantId: number, db: Db = graph()): void {
-  db.tx(() => {
-    db.run('DELETE FROM participant_coverage WHERE participant_id = ?', participantId);
-    db.run(
-      `INSERT INTO participant_coverage (participant_id, concept_id, first_at, last_at, span_days, n_obs, best_prov_rank, verified_n, self_report_n, last_value_num, protocol_days)
+export async function rebuildCoverage(participantId: number, db: Db = graph()): Promise<void> {
+  await db.tx(async () => {
+        await db.run('DELETE FROM participant_coverage WHERE participant_id = ?', participantId);
+        await db.run(
+                `INSERT INTO participant_coverage (participant_id, concept_id, first_at, last_at, span_days, n_obs, best_prov_rank, verified_n, self_report_n, last_value_num, protocol_days)
        SELECT o.participant_id, o.concept_id, MIN(CASE WHEN o.derivation IS NULL THEN o.observed_at END), MAX(CASE WHEN o.derivation IS NULL THEN o.observed_at END),
               CAST(julianday(substr(MAX(CASE WHEN o.derivation IS NULL THEN o.observed_at END), 1, 10)) - julianday(substr(MIN(CASE WHEN o.derivation IS NULL THEN o.observed_at END), 1, 10)) AS INTEGER),
               SUM(CASE WHEN o.derivation IS NULL THEN 1 ELSE 0 END),
@@ -24,24 +24,24 @@ export function rebuildCoverage(participantId: number, db: Db = graph()): void {
               (SELECT COUNT(DISTINCT substr(o3.observed_at, 1, 10)) FROM observation o3 WHERE o3.participant_id = o.participant_id AND o3.concept_id = o.concept_id AND o3.deleted_at IS NULL AND o3.provenance_class = 'protocol_measurement' AND o3.contribution_id IS NOT NULL)
          FROM observation o
         WHERE o.participant_id = ? AND o.deleted_at IS NULL
-        GROUP BY o.concept_id
+        GROUP BY o.participant_id, o.concept_id
        HAVING SUM(CASE WHEN o.derivation IS NULL THEN 1 ELSE 0 END) > 0`,
-      participantId,
-    );
-  });
+                participantId,
+              );
+      });
 }
 
-export function coverageFor(participantId: number, db: Db = graph()): Map<string, CoverageRow> {
-  const rows = db.all<CoverageRow>(
-    `SELECT c.concept_id, k.slug, c.first_at, c.last_at, c.span_days, c.n_obs, c.best_prov_rank, c.verified_n, c.self_report_n, c.last_value_num, c.protocol_days
+export async function coverageFor(participantId: number, db: Db = graph()): Promise<Map<string, CoverageRow>> {
+  const rows = await db.all<CoverageRow>(
+      `SELECT c.concept_id, k.slug, c.first_at, c.last_at, c.span_days, c.n_obs, c.best_prov_rank, c.verified_n, c.self_report_n, c.last_value_num, c.protocol_days
        FROM participant_coverage c JOIN concept k ON k.id = c.concept_id WHERE c.participant_id = ?`, participantId);
   return new Map(rows.map((r) => [r.slug, r]));
 }
 
 /** Coverage as of an earlier date, computed from observations (used for the "+6 this month" delta). */
-export function coverageAsOf(participantId: number, asOf: string, db: Db = graph()): Map<string, CoverageRow> {
-  const rows = db.all<CoverageRow>(
-    `SELECT o.concept_id, k.slug, MIN(CASE WHEN o.derivation IS NULL THEN o.observed_at END) AS first_at, MAX(CASE WHEN o.derivation IS NULL THEN o.observed_at END) AS last_at,
+export async function coverageAsOf(participantId: number, asOf: string, db: Db = graph()): Promise<Map<string, CoverageRow>> {
+  const rows = await db.all<CoverageRow>(
+      `SELECT o.concept_id, k.slug, MIN(CASE WHEN o.derivation IS NULL THEN o.observed_at END) AS first_at, MAX(CASE WHEN o.derivation IS NULL THEN o.observed_at END) AS last_at,
             CAST(julianday(substr(MAX(CASE WHEN o.derivation IS NULL THEN o.observed_at END), 1, 10)) - julianday(substr(MIN(CASE WHEN o.derivation IS NULL THEN o.observed_at END), 1, 10)) AS INTEGER) AS span_days,
             SUM(CASE WHEN o.derivation IS NULL THEN 1 ELSE 0 END) AS n_obs,
             MAX(o.provenance_rank) AS best_prov_rank,
@@ -51,7 +51,7 @@ export function coverageAsOf(participantId: number, asOf: string, db: Db = graph
             0 AS protocol_days
        FROM observation o JOIN concept k ON k.id = o.concept_id
       WHERE o.participant_id = ? AND o.deleted_at IS NULL AND substr(o.observed_at, 1, 10) <= ?
-      GROUP BY o.concept_id
-     HAVING n_obs > 0`, participantId, asOf);
+      GROUP BY o.concept_id, k.slug
+     HAVING SUM(CASE WHEN o.derivation IS NULL THEN 1 ELSE 0 END) > 0`, participantId, asOf);
   return new Map(rows.map((r) => [r.slug, r]));
 }

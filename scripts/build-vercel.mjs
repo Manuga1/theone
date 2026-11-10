@@ -1,11 +1,10 @@
 // Produces a Vercel Build Output API (v3) deployment in .vercel/output:
 //   static/                      the Vite client build
-//   functions/api/index.func/    the whole API bundled into one ESM file by esbuild, plus the build-time seed
-//                                (seed-data/graph.sqlite, vault.sqlite) that the function copies to /tmp on cold start
-// Run by `npm run build:vercel` (Vercel's Build Command). Needs Node 22.13+ for node:sqlite.
-import { cpSync, mkdirSync, rmSync, writeFileSync, existsSync, statSync, createReadStream, createWriteStream } from 'node:fs';
-import { createGzip } from 'node:zlib';
-import { pipeline } from 'node:stream/promises';
+//   functions/api/index.func/    the whole API bundled into one ESM file by esbuild (+ schema.sql and PGlite for reseeds)
+// and, before that, prepares the database: applies the schema to Supabase and seeds it if it holds no seed of the
+// requested scale (SEED_SCALE, default 0.2). The connection comes from the Supabase ⇄ Vercel integration
+// (POSTGRES_URL / POSTGRES_URL_NON_POOLING) or DATABASE_URL. Run by `npm run build:vercel` (Vercel's Build Command).
+import { cpSync, mkdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,34 +13,26 @@ import { build } from 'esbuild';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const out = path.join(root, '.vercel', 'output');
 const funcDir = path.join(out, 'functions', 'api', 'index.func');
-// Diagnostics first: the build needs node:sqlite (Node >= 22.5; unflagged from 22.13).
-const [major, minor] = process.versions.node.split('.').map(Number);
 console.log(`[build:vercel] node ${process.versions.node} on ${process.platform}/${process.arch}, cwd ${process.cwd()}`);
-if (major < 22 || (major === 22 && minor < 5)) {
-  console.error(`[build:vercel] Node ${process.versions.node} has no node:sqlite. Set the project's Node.js version to 22.x (Vercel: Settings → General → Node.js Version).`);
-  process.exit(1);
-}
-const needsFlag = major === 22 && minor < 13;
-const nodeOptions = [needsFlag ? '--experimental-sqlite' : '', '--disable-warning=ExperimentalWarning'].filter(Boolean).join(' ');
-const env = { ...process.env, NODE_OPTIONS: nodeOptions };
-try {
-  await import('node:sqlite');
-  console.log('[build:vercel] node:sqlite OK');
-} catch (e) {
-  console.error('[build:vercel] node:sqlite failed to load:', e?.message);
-  if (!needsFlag) process.exit(1);
-}
+const env = { ...process.env, NODE_OPTIONS: '--disable-warning=ExperimentalWarning' };
 const run = (cmd, args) => {
   const r = spawnSync(cmd, args, { cwd: root, stdio: 'inherit', env, shell: process.platform === 'win32' });
   if (r.status !== 0) throw new Error(`${cmd} ${args.join(' ')} failed (${r.status})`);
 };
 const t0 = Date.now();
 
-// 1. synthetic seed (full scale unless SEED_SCALE is set; SEED_DISABLED=1 ships an empty schema)
-const seedArgs = ['tsx', 'server/seed/index.ts', '--force'];
-if (process.env.SEED_DISABLED === '1') seedArgs.push('--schema-only');
-else if (process.env.SEED_SCALE) seedArgs.push('--scale', process.env.SEED_SCALE);
-run('npx', seedArgs);
+// 1. database: schema + seed (skipped when the database already holds a seed of this scale)
+const hasDb = !!(process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.POSTGRES_URL_NON_POOLING);
+if (hasDb) {
+  const seedArgs = ['tsx', 'server/seed/index.ts', '--scale', process.env.SEED_SCALE || '0.2'];
+  if (process.env.SEED_DISABLED === '1') seedArgs.push('--schema-only');
+  run('npx', seedArgs);
+} else if (process.env.VERCEL_ENV) {
+  console.error('[build:vercel] no database configured. Connect the Supabase project to this Vercel project (Supabase → Project Settings → Integrations → Vercel), or set DATABASE_URL.');
+  process.exit(1);
+} else {
+  console.log('[build:vercel] no DATABASE_URL / POSTGRES_URL: skipping the database step (CI build check)');
+}
 
 // 2. client
 run('npx', ['vite', 'build']);
@@ -57,6 +48,8 @@ await build({
   format: 'esm',
   target: 'node22',
   tsconfig: path.join(root, 'tsconfig.server.json'),
+  // pg-native is an optional binding pg never needs here; PGlite (WASM) is shipped as a package below
+  external: ['pg-native', '@electric-sql/pglite'],
   banner: { js: "import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);" },
   define: { 'process.env.NODE_ENV': '"production"' },
   legalComments: 'none',
@@ -67,21 +60,12 @@ writeFileSync(
   path.join(funcDir, '.vc-config.json'),
   JSON.stringify({ runtime: 'nodejs22.x', handler: 'index.mjs', launcherType: 'Nodejs', shouldAddHelpers: false, maxDuration: 60, memory: 1024 }, null, 2),
 );
+// schema.sql is read at runtime by migrate(); PGlite is only needed if a reset has to regenerate (no matching snapshot)
+cpSync(path.join(root, 'server', 'db', 'schema.sql'), path.join(funcDir, 'schema.sql'));
+const pglite = path.join(root, 'node_modules', '@electric-sql', 'pglite');
+if (existsSync(pglite)) cpSync(pglite, path.join(funcDir, 'node_modules', '@electric-sql', 'pglite'), { recursive: true });
 
-// 4. seed data travels with the function (read-only there; copied to /tmp at runtime)
-const seedDir = path.join(funcDir, 'seed-data');
-mkdirSync(seedDir, { recursive: true });
-// gzipped: keeps every deployed file well under Vercel's 100 MB per-file limit; the function gunzips to /tmp on cold start
-let bytes = 0;
-for (const f of ['graph.sqlite', 'vault.sqlite']) {
-  const src = path.join(root, 'data', f);
-  if (!existsSync(src)) throw new Error(`missing ${src} after seed`);
-  const dst = path.join(seedDir, `${f}.gz`);
-  await pipeline(createReadStream(src), createGzip({ level: 6 }), createWriteStream(dst));
-  bytes += statSync(dst).size;
-}
-
-// 5. static + routes
+// 4. static + routes
 cpSync(path.join(root, 'dist', 'client'), path.join(out, 'static'), { recursive: true });
 writeFileSync(
   path.join(out, 'config.json'),
@@ -98,4 +82,4 @@ writeFileSync(
     2,
   ),
 );
-console.log(`[build:vercel] .vercel/output ready in ${((Date.now() - t0) / 1000).toFixed(1)} s (seed data ${(bytes / 1e6).toFixed(0)} MB gzipped)`);
+console.log(`[build:vercel] .vercel/output ready in ${((Date.now() - t0) / 1000).toFixed(1)} s`);

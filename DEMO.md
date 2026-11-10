@@ -2,7 +2,7 @@
 
 The script below is what `npm run test:e2e` (`e2e/loop.spec.ts`) drives in Chromium against the full seed, so it stays
 green as the code moves. Start with `npm run dev` (seeds `data/` on the first run, ≈ 15 s) and open
-<http://localhost:5173>. Every number named here is computed from `data/graph.sqlite`; none is typed into the client.
+<http://localhost:5173>. Every number named here is computed from the database (`data/pglite` locally); none is typed into the client.
 
 Fixed clock: today is **2026-10-24**. The header has the persona switch (participant ⇄ buyer), the buyer organisation
 selector and **Reset demo** (wipes and reseeds in ≈ 15 s and returns you to the persona's home page).

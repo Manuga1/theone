@@ -1,31 +1,33 @@
-// Applies schema.sql / vault-schema.sql. Every statement is CREATE ... IF NOT EXISTS, so this is idempotent.
-import { readFileSync } from 'node:fs';
+// Applies schema.sql. Every statement is idempotent (CREATE … IF NOT EXISTS / CREATE OR REPLACE), so this can run on every deploy.
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { Db } from './driver';
+import type { Db, Param } from './driver';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
-export function migrateGraph(db: Db): void {
-  db.exec(readFileSync(path.join(here, 'schema.sql'), 'utf8'));
-  // additive columns for databases created before they existed (CREATE IF NOT EXISTS does not alter)
-  addColumn(db, 'concept', 'reuse_comp_cents', 'INTEGER NOT NULL DEFAULT 0');
-}
-function addColumn(db: Db, table: string, column: string, decl: string): void {
-  const cols = db.all<{ name: string }>(`PRAGMA table_info(${table})`).map((c) => c.name);
-  if (!cols.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
-}
-export function migrateVault(db: Db): void {
-  db.exec(readFileSync(path.join(here, 'vault-schema.sql'), 'utf8'));
+export function schemaSql(): string {
+  // dev/tests: next to this file; deployed bundle: copied next to index.mjs by scripts/build-vercel.mjs
+  for (const p of [path.join(here, 'schema.sql'), path.join(here, 'db', 'schema.sql')]) if (existsSync(p)) return readFileSync(p, 'utf8');
+  throw new Error('schema.sql not found');
 }
 
-/** Generic insert helper: `insert(db, 'table', { col: value })` → lastId. Statement text is stable per key set, so it is cached. */
-export function insert(db: Db, table: string, row: Record<string, unknown>): number {
+/** Application tables in dependency order (the CREATE TABLE order of schema.sql). */
+export function appTables(): string[] {
+  return Array.from(schemaSql().matchAll(/CREATE TABLE IF NOT EXISTS (\w+)/g), (m) => m[1]).filter((t) => t !== 'app_meta');
+}
+
+export async function migrate(db: Db): Promise<void> {
+  await db.exec(schemaSql());
+}
+
+/** Generic insert helper: `insert(db, 'table', { col: value })` → id of the new row. */
+export async function insert(db: Db, table: string, row: Record<string, unknown>): Promise<number> {
   const keys = Object.keys(row);
   const sql = `INSERT INTO ${table} (${keys.join(', ')}) VALUES (${keys.map(() => '?').join(', ')})`;
-  return db.run(sql, ...keys.map((k) => normalize(row[k]))).lastId;
+  return (await db.run(sql, ...keys.map((k) => normalize(row[k])))).lastId;
 }
-export function normalize(v: unknown): string | number | null {
+export function normalize(v: unknown): Param {
   if (v === undefined || v === null) return null;
   if (typeof v === 'boolean') return v ? 1 : 0;
   if (typeof v === 'number' || typeof v === 'string') return v;
