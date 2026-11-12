@@ -25,13 +25,26 @@ export function createApp(): express.Express {
     app.get('*path', (_req, res) => res.sendFile(path.join(dist, 'index.html')));
   }
 
-  app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-    const e = err as { status?: number; message?: string; code?: string };
-    const status = e.status ?? 500;
-    if (status >= 500) console.error(err);
-    res.status(status).json({ error: e.message ?? 'internal error', code: e.code });
-  });
+  app.use(errorHandler);
   return app;
+}
+
+/**
+ * The one line written for a failed request: method, path (no query string), status and the error message. Never the
+ * request body, headers, query string or the error object itself (body-parser errors carry the raw body).
+ */
+export function errorLogLine(req: Pick<express.Request, 'method' | 'originalUrl'>, status: number, message: string): string {
+  const path = (req.originalUrl ?? '').split('?')[0];
+  const msg = message.replace(/\s+/g, ' ').trim().slice(0, 300);
+  return `[api] ${req.method} ${path} ${status} ${msg}`;
+}
+
+export function errorHandler(err: unknown, req: express.Request, res: express.Response, _next: express.NextFunction): void {
+  const e = (err ?? {}) as { status?: number; message?: string; code?: string };
+  const status = typeof e.status === 'number' && e.status >= 400 && e.status <= 599 ? e.status : 500;
+  const message = typeof e.message === 'string' && e.message ? e.message : 'internal error';
+  if (status >= 500) console.error(errorLogLine(req, status, message));
+  res.status(status).json({ error: message, code: e.code });
 }
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname);

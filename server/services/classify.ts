@@ -2,6 +2,9 @@
 // configured (ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN / an `ant auth` profile). CLASSIFIER=rules forces the rules
 // (tests always set it); CLASSIFIER=claude forces an attempt even without an env credential (ant auth profile).
 // Any API/auth error falls back to the rules and records classifier: 'rules'. Never called from tests with Claude.
+// Hosted deployments (isHosted()) always classify by rules, whatever credential is present: quick logs and upload text
+// would otherwise leave the server for a third party. HOSTED_CLASSIFIER=claude lifts that, and must only be set after a
+// data-processing agreement with the model provider is in place AND the consent / privacy notice discloses the processing.
 import Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import { z } from 'zod';
@@ -10,6 +13,7 @@ import type { ClassifierName, Proposal, UploadFileInput } from '@shared/api-type
 import { BRANCHING, classifyText, decide, routeFile, thresholdFor, type FileRoute, type LeafSpec, type TextClassification, type VariantSpec } from '@shared/branching';
 import type { ContextRule, FollowUpDef } from '@shared/ontology';
 import { graph } from '../db/graph';
+import { isHosted } from '../db/paths';
 import type { Db } from '../db/driver';
 import { concepts, conceptPath, type ConceptRow } from './ontology';
 
@@ -82,6 +86,7 @@ let client: Anthropic | null | undefined;
 let disabledReason: string | null = null;
 
 function envWantsClaude(): boolean {
+  if (isHosted() && (process.env.HOSTED_CLASSIFIER ?? '').toLowerCase() !== 'claude') return false;
   const mode = (process.env.CLASSIFIER ?? '').toLowerCase();
   if (mode === 'rules') return false;
   if (mode === 'claude') return true;

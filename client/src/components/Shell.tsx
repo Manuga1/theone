@@ -1,5 +1,6 @@
-// App shell: participant (light sidebar) and buyer (dark navy sidebar) layouts, persona switch, buyer org selector,
-// "Reset demo" button, a splash while the API reports ready=false, and an empty state when the database is unseeded.
+// App shell: the demo banner, participant (light sidebar) and buyer (dark navy sidebar) layouts, persona switch, buyer
+// org selector, a splash while the API reports ready=false, and an empty state when the database is unseeded.
+// "Reset demo" and the Admin / Analytics nav items exist only in admin mode (?admin, see admin.ts).
 import { useEffect, useState, type ReactNode } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
@@ -7,15 +8,18 @@ import {
   RotateCcw, ArrowRightLeft,
 } from 'lucide-react';
 import type { DemoState, Health, Persona } from '@shared/api-types';
+import { BRAND } from '@shared/brand';
 import { useApi, usePersona } from '../hooks';
 import { api } from '../api';
+import { useAdmin } from '../admin';
+import { BrandMark, DemoBanner } from './Brand';
 import { Splash } from './Splash';
 import { EmptyState } from './EmptyState';
 import { SearchBar } from './SearchBar';
-import { Toasts } from '../toast';
+import { Toasts, toastError } from '../toast';
 import { BlockedBanner, useOrgConsent } from '../buyer/shared';
 
-export type NavItem = { to: string; label: string; icon: ReactNode; end?: boolean; /** bottom-nav label on phones */ shortLabel?: string };
+export type NavItem = { to: string; label: string; icon: ReactNode; end?: boolean; /** bottom-nav label on phones */ shortLabel?: string; /** shown only in admin mode */ adminOnly?: boolean };
 
 export const PARTICIPANT_NAV: NavItem[] = [
   { to: '/p', label: 'My Health', icon: <HeartPulse />, end: true, shortLabel: 'Home' },
@@ -31,8 +35,8 @@ export const BUYER_NAV: NavItem[] = [
   { to: '/b/studies', label: 'My Studies', icon: <FlaskConical />, shortLabel: 'Studies' },
   { to: '/b/datasets', label: 'Datasets', icon: <Layers /> },
   { to: '/b/campaigns', label: 'Collection Campaigns', icon: <Megaphone />, shortLabel: 'Campaigns' },
-  { to: '/b/analytics', label: 'Analytics', icon: <ChartLine /> },
-  { to: '/b/admin', label: 'Admin', icon: <Settings /> },
+  { to: '/b/analytics', label: 'Analytics', icon: <ChartLine />, adminOnly: true },
+  { to: '/b/admin', label: 'Admin', icon: <Settings />, adminOnly: true },
 ];
 
 export type ShellProps = {
@@ -51,6 +55,7 @@ function orgIdOf(p: Persona): number | null {
 
 export function Shell({ side, title, wide, children, state: stateProp, health: healthProp }: ShellProps) {
   const [persona, setPersona] = usePersona();
+  const admin = useAdmin();
   const navigate = useNavigate();
   const healthQ = useApi<Health>(healthProp === undefined ? '/health' : null);
   const stateQ = useApi<DemoState>(stateProp === undefined ? '/demo/state' : null);
@@ -95,6 +100,9 @@ export function Shell({ side, title, wide, children, state: stateProp, health: h
       await api.post('/demo/reset');
       healthQ.reload();
       stateQ.reload();
+    } catch (e) {
+      // e.g. 403 on the hosted demo without a valid admin token: say so instead of failing silently
+      toastError(e, 'Reset demo');
     } finally {
       setResetting(false);
     }
@@ -103,22 +111,24 @@ export function Shell({ side, title, wide, children, state: stateProp, health: h
   if (health && !health.ready) return <Splash />;
   if (resetting) return <Splash title="Resetting demo…" sub="Wiping data/ and regenerating the synthetic population." />;
 
-  const nav = side === 'participant' ? PARTICIPANT_NAV : BUYER_NAV;
+  const nav = (side === 'participant' ? PARTICIPANT_NAV : BUYER_NAV).filter((n) => admin || !n.adminOnly);
   const orgId = orgIdOf(persona);
   const org = state?.orgs.find((o) => o.id === orgId) ?? state?.orgs[0] ?? null;
   const seeded = state?.seeded ?? health?.seeded ?? true;
 
   const dark = side === 'buyer';
   return (
+    <div className="demo-frame">
+    <DemoBanner />
     <div className="shell">
       {/* ≤ 900 px: the sidebar is hidden; this top bar and the bottom nav take over (CSS in components.css). */}
       <div className={`shell__topbar${dark ? ' shell__topbar--dark' : ''}`}>
-        <div className="shell__brand"><span className="shell__brand-mark">H</span> {side === 'participant' ? (state?.participantPseudonym ?? 'Health Data Asset') : (org?.name ?? 'Health Data Asset')}</div>
+        <div className="shell__brand"><BrandMark /> <span className="shell__brand-text">{side === 'participant' ? (state?.participantPseudonym ?? BRAND.name) : (org?.name ?? BRAND.name)}</span></div>
         <button className="btn btn--sm" onClick={switchPersona} title={side === 'participant' ? 'View as buyer' : 'View as participant'} aria-label="Switch persona"><ArrowRightLeft /></button>
-        <button className="btn btn--sm" onClick={reset} title="Wipe and reseed synthetic data" aria-label="Reset demo"><RotateCcw /></button>
+        {admin && <button className="btn btn--sm" onClick={reset} title="Wipe and reseed synthetic data" aria-label="Reset demo"><RotateCcw /></button>}
       </div>
       <aside className={`shell__nav${dark ? ' shell__nav--dark' : ''}`}>
-        <div className="shell__brand"><span className="shell__brand-mark">H</span> Health Data Asset</div>
+        <div className="shell__brand"><BrandMark /> {BRAND.name}</div>
         {side === 'participant' ? (
           <div className="shell__me">
             <span className="avatar avatar--md">{state?.participantPseudonym ? 'P' : '–'}</span>
@@ -162,7 +172,7 @@ export function Shell({ side, title, wide, children, state: stateProp, health: h
           <button className="btn btn--sm" onClick={switchPersona} title="Switch persona">
             <ArrowRightLeft /> <span>{side === 'participant' ? 'View as buyer' : 'View as participant'}</span>
           </button>
-          <button className="btn btn--sm" onClick={reset} title="Wipe and reseed synthetic data"><RotateCcw /> <span>Reset demo</span></button>
+          {admin && <button className="btn btn--sm" onClick={reset} title="Wipe and reseed synthetic data"><RotateCcw /> <span>Reset demo</span></button>}
         </header>
         <main className={`shell__content${wide ? ' shell__content--wide' : ''}`}>
           {!seeded && side === 'participant' ? <EmptyState /> : null}
@@ -180,6 +190,7 @@ export function Shell({ side, title, wide, children, state: stateProp, health: h
           </NavLink>
         ))}
       </nav>
+    </div>
     </div>
   );
 }

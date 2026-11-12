@@ -18,7 +18,7 @@ npm install
 npm run dev        # seeds data/ on first run (~15 s), then API on :4000 and app on :5173
 ```
 
-Open <http://localhost:5173>. The header has a **persona switch** (participant ⇄ buyer), a buyer **organisation selector**, and **Reset demo**.
+Open <http://localhost:5173>. `/` is the public site (see *Go-to-market kit*); the product demo is at `/p` (participant) and `/b` (buyer). The demo header has a **persona switch** (participant ⇄ buyer) and a buyer **organisation selector**. **Reset demo**, **Advance 7 days** and the Admin and Analytics pages appear only in admin mode: open any demo page with `?admin` (locally) or `?admin=<DEMO_ADMIN_TOKEN>` (hosted).
 
 | Script | What it does |
 |---|---|
@@ -38,7 +38,7 @@ Environment knobs: `CLASSIFIER=rules` forces the rule classifier (tests always s
 
 All fake data lives in **`data/graph.sqlite` and `data/vault.sqlite`**, which are generated and gitignored. Nothing synthetic is committed, and the only code that produces it is `server/seed/`.
 
-- `npm run data:wipe` deletes it. `npm run seed` regenerates it. The in-app **Reset demo** button does both (≈ 15 s) and returns to the persona's home page.
+- `npm run data:wipe` deletes it. `npm run seed` regenerates it. The in-app **Reset demo** button (admin mode only) does both (≈ 15 s) and returns to the persona's home page.
 - `DATA_DIR=/somewhere npm run dev` (or `GRAPH_DB=` / `VAULT_DB=`) keeps the databases elsewhere; the seed check, the seed CLI and the server all resolve the same path.
 - `SEED_DISABLED=1 npm run dev` (or `node scripts/ensure-seed.mjs --no-seed`) creates the schema only. The app runs against an empty database: participant pages show an empty state and buyer counts read zero. A test boots the API this way and asserts every route still answers.
 - To remove generation entirely, delete `server/seed/` and the `ensure-seed` step from the `dev`/`start` scripts. Real data would enter through the same observation envelope (`observation` table) via connectors you write.
@@ -99,7 +99,7 @@ docs/       branching-decision-tree.md, audit-chain-rewards-vault.md, storage-an
 
 **Apple Health import.** Live sync needs a native app, so the card on Data Sources imports the Health app's `export.xml` instead: the file is read in the browser and posted as text (≤ 25 MB in the demo), a streaming regex parser maps `HKQuantityTypeIdentifier` records (heart rate, resting heart rate, HRV, steps, body mass, blood pressure pairs, glucose, dietary energy, oxygen saturation) and `SleepAnalysis` to leaves with `connected_device` provenance, one artifact row records the import, and re-importing the same file skips duplicates by (concept, timestamp, value). `tests/fixtures/apple-health-sample.xml` is a 22-record sample.
 
-**Governance.** Consent is visible and revocable, with the one limit from the brief: completed research cannot be undone. Revoking a license is forward-only (the member drops out of the next dataset version, ledger rows stay). Disconnecting a source or deleting a category soft-deletes observations and rebuilds coverage. Seven uses are red-lined for every participant (employment, credit, housing, insurance, advertising, criminal suspicion, political targeting); an organisation declaring one of them sees zero counts and cannot create campaigns.
+**Governance.** Consent is visible and revocable, with the one limit from the brief: completed research cannot be undone. Revoking a license is forward-only (the member drops out of the next dataset version, ledger rows stay). Disconnecting a source or deleting a category soft-deletes observations and rebuilds coverage. Eleven uses are red-lined for every participant, from one list in `shared/ontology.ts` (`PROHIBITED_USES`): advertising, insurance underwriting, employment screening, law enforcement or immigration, re-identification, resale to data brokers, credit decisions, housing decisions, political targeting, litigation against participants, and gambling or other targeting of behavioural vulnerability. An organisation declaring one of them sees zero counts and cannot create campaigns, and a single campaign tagged with one is refused.
 
 ## The loop, as the code runs it
 
@@ -124,11 +124,33 @@ The repo ships a Vercel Build Output pipeline (`npm run build:vercel`, declared 
 1. On vercel.com choose **Add New → Project** and import `Manuga1/theone`.
 2. Framework preset **Other**. The build command comes from `vercel.json`; leave Output Directory empty. Node.js 22.x (the default for new projects; see Settings → General if the build complains about `node:sqlite`).
 3. **Deploy.** The first build takes about a minute (the seed is ~15 s of it).
-4. Production branch: this code lives on `claude/busy-tesla-v610bi` while `main` still holds the previous site. Either merge the branch into `main`, or set **Settings → Git → Production Branch** to `claude/busy-tesla-v610bi` and redeploy.
+4. Production deploys from `main`. Feature work happens on a branch and is fast-forwarded into `main` once CI is green.
+5. Set `DEMO_ADMIN_TOKEN` under *Settings → Environment Variables*. Without it, Reset demo and Advance 7 days are refused for everyone on the hosted site.
 
-To enable the Claude classifier on the hosted demo add `ANTHROPIC_API_KEY` (and optionally `CLASSIFIER_MODEL`) under *Settings → Environment Variables* and redeploy; without it the function classifies by rules and says so.
+The hosted demo always classifies by rules, so no typed text is sent to a model provider. `HOSTED_CLASSIFIER=claude` together with `ANTHROPIC_API_KEY` lifts that; do not set it before a data-processing agreement is in place and the consent and privacy notice disclose it.
 
-Hosted caveats: every serverless instance has its own copy of the data, so what you change (accepting an offer, launching a campaign) lives on the instance that served you and is gone when it is recycled. **Reset demo** reseeds that instance (≈ 15 s, inside the 60 s function limit). The footer reads "Hosted demo" in this mode. Build-time knobs: `SEED_SCALE=0.2` for a smaller function and faster cold starts, `SEED_DISABLED=1` for a schema-only deployment. For a persistent multi-user deployment run `npm start` on an ordinary server where `data/` is a real disk.
+Hosted caveats: every serverless instance has its own copy of the data, so what you change (accepting an offer, launching a campaign) lives on the instance that served you and is gone when it is recycled. **Reset demo** (admin mode, with the token) reseeds that instance (≈ 15 s, inside the 60 s function limit). The footer reads "Hosted demo" in this mode. Run live demos from a laptop (`npm run dev`) so nothing resets mid-call. Build-time knobs: `SEED_SCALE=0.2` for a smaller function and faster cold starts, `SEED_DISABLED=1` for a schema-only deployment. For a persistent multi-user deployment run `npm start` on an ordinary server where `data/` is a real disk.
+
+## Go-to-market kit
+
+The founders' plan for taking Padma to market lives in [docs/gtm/](docs/gtm/README.md): the plan itself, the alignment-call agenda, permission and outreach emails, the interview guide, the offer and pricing note, the registry notice, legal drafts for review, the dry-run and recontact-test protocols, the deck outline, the name check, and `targets.csv` (100 leads from ClinicalTrials.gov, PubMed and company research, ranked by track and priority).
+
+**Public site.** `/` (what Padma is, two paths), `/researchers` (offers without prices, the money rule, one link into the demo), `/join` (the registry, no prices, no link into the demo), `/privacy` (the registry notice), `/protocols` and `/protocols/:slug` (three printable protocol sheets with a watermark and no population numbers). Every public page states that Padma is a student project with no enrolled participants yet, and that it is not affiliated with or endorsed by Vanderbilt.
+
+**Demo honesty.** Every demo screen, at every width, shows "Simulated data. Not real people. Do not enter real health information." Every dollar figure in the participant demo is labelled illustrative. The quick log, upload, Apple Health import and check-in say they are demo-only.
+
+**Build-time settings (Vercel → Settings → Environment Variables).** All optional; unset values show an honest "opens soon" state.
+
+| Variable | Effect |
+|---|---|
+| `VITE_REGISTRY_FORM_URL` | Embeds the registry sign-up form on `/join` |
+| `VITE_PILOT_FORM_URL` | Embeds the pilot-enquiry form on `/researchers` |
+| `VITE_CONTACT_EMAIL` | Email fallback for both forms and the deletion contact on `/privacy` |
+| `VITE_FOUNDERS` | Comma-separated founder names shown on `/privacy` |
+| `DEMO_ADMIN_TOKEN` | Unlocks Reset demo and Advance 7 days on the hosted site via `?admin=<token>` |
+| `HOSTED_CLASSIFIER` | Leave unset. `claude` sends typed demo text to a model provider |
+
+The product name and the honest status wording live in one file, `shared/brand.ts`; change `BRAND.name` there if the name changes (see `docs/gtm/name-check.md`).
 
 ## Deviations from the mockups (deliberate, documented)
 

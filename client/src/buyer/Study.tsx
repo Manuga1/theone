@@ -7,6 +7,7 @@ import type { StudyCounters, StudyDetail, StudyParticipants } from '@shared/api-
 import { api } from '../api';
 import { useApi } from '../hooks';
 import { useAction } from '../useAction';
+import { useAdmin } from '../admin';
 import { Card, BarRow, Pill, ErrorBox, KNum, kfloor } from '../components';
 import { studyStatusPill } from './Studies';
 
@@ -14,8 +15,10 @@ export default function StudyPage() {
   const { id } = useParams();
   const q = useApi<StudyDetail>(id ? `/buyer/studies/${id}` : null);
   const [showParticipants, setShowParticipants] = useState(false);
+  // Moving the study clock is a demo control: shown in admin mode only (and token-guarded on the hosted API).
+  const admin = useAdmin();
   const parts = useApi<StudyParticipants>(showParticipants && id ? `/buyer/studies/${id}/participants` : null);
-  const advance = useAction(async () => api.post(`/buyer/studies/${id}/advance`, { days: 7 }), { success: 'Advanced the study clock by 7 days' });
+  const advance = useAction(async () => api.post(`/buyer/studies/${id}/advance`, { days: 7 }), { success: 'Advanced the study clock by 7 days', errorPrefix: 'Advance 7 days' });
   const recontact = useAction(async () => api.post(`/buyer/studies/${id}/recontact`), { success: 'Replacement invitations sent' });
   if (q.error) return <ErrorBox error={q.error} />;
   const d = q.data;
@@ -36,7 +39,7 @@ export default function StudyPage() {
           <div className="sub">{d.cohortSummary || d.purpose}</div>
         </div>
         <div className="row gap-6">
-          <button className="btn" disabled={advance.busy} onClick={() => advance.run()}><FastForward /> Advance 7 days</button>
+          {admin && <button className="btn" disabled={advance.busy} onClick={() => advance.run()}><FastForward /> Advance 7 days</button>}
           <button className="btn" disabled={recontact.busy || c.needReplacement === 0} onClick={() => recontact.run()}><RefreshCw /> Recontact</button>
           <button className={`btn${showParticipants ? ' btn--primary' : ''}`} onClick={() => setShowParticipants((v) => !v)}><Users /> View participants</button>
         </div>

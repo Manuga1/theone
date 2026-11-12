@@ -1,6 +1,9 @@
+import { DemoBanner } from './Brand';
+
 export function Splash({ title = 'Preparing demo data…', sub = 'Generating the synthetic health graph. This takes about 15 seconds.' }: { title?: string; sub?: string }) {
   return (
     <div className="splash">
+      <DemoBanner />
       <div className="splash__box">
         <div className="spinner" />
         <div className="h2">{title}</div>

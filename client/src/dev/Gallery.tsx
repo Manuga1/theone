@@ -9,6 +9,7 @@ import {
   CoverageBars, ConsentPanel, LedgerTable, Shell, Money, Num, KNum, Pct, signed,
 } from '../components';
 import * as fx from './fixtures';
+import '../styles/components.css';
 
 function Item({ title, children, width }: { title: string; children: React.ReactNode; width?: number }) {
   return (

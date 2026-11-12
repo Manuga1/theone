@@ -9,6 +9,7 @@ import type {
 import type { CampaignVariable } from '@shared/requirement';
 import { graph } from '../db/graph';
 import { badRequest, forbidden, notFound } from '../errors';
+import { requireAdmin } from '../middleware/admin';
 import { orgActivity } from '../services/activity';
 import { evaluateCohort, kfloorN, orgConsent, previewFor } from '../services/cohort';
 import { criteriaHash } from '../services/cohort-hash';
@@ -170,7 +171,8 @@ buyerRouter.get('/studies/:id/participants', wrap((req, res) => {
   const body: StudyParticipants = studyParticipants(orgId(req), Number(req.params.id), { limit: Number.isFinite(limit) ? limit : undefined, offset: Number.isFinite(offset) ? offset : undefined });
   res.json(body);
 }));
-buyerRouter.post('/studies/:id/advance', wrap((req, res) => {
+// simulation control (moves a study forward in time): on a hosted deployment it needs the admin token header
+buyerRouter.post('/studies/:id/advance', requireAdmin, wrap((req, res) => {
   const input = (req.body ?? {}) as AdvanceRequest;
   const body: AdvanceResult = advanceStudy(orgId(req), Number(req.params.id), Number(input.days ?? 7));
   res.json(body);

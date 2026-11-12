@@ -1,5 +1,6 @@
 // Admin: organisation, declared uses vs participant red-lines, demo clock and data controls.
 import type { BuyerHome, DemoState } from '@shared/api-types';
+import { PROHIBITED_USES } from '@shared/ontology';
 import { useApi } from '../hooks';
 import { Card, Pill, ErrorBox } from '../components';
 import { useOrgConsent } from './shared';
@@ -26,7 +27,7 @@ export default function AdminPage() {
             </div>
           )}
           {consent.blocked && <div className="callout callout--red mt-12">{consent.reason}</div>}
-          <div className="note mt-12">Declared uses are checked against every participant's fixed red-lines (advertising, insurance underwriting, employment screening, law enforcement, re-identification, data brokerage, credit scoring). A conflicting use zeroes every cohort and refuses campaign creation.</div>
+          <div className="note mt-12">Declared uses are checked against every participant's fixed red-lines ({PROHIBITED_USES.map((p) => p.label.toLowerCase()).join('; ')}). A conflicting use zeroes every cohort and refuses campaign creation.</div>
         </Card>
         <div className="col gap-16">
           <Card title="Organisations in this demo">

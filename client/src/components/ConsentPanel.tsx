@@ -2,10 +2,11 @@
 import { Check, X } from 'lucide-react';
 import type { OpportunityDetail } from '@shared/api-types';
 import { money } from '@shared/fmt';
+import { Illustrative } from './Brand';
 
-export type ConsentPanelProps = { consent: OpportunityDetail['consent']; compact?: boolean };
+export type ConsentPanelProps = { consent: OpportunityDetail['consent']; compact?: boolean; /** participant demo: caption the dollar figures */ illustrative?: boolean };
 
-export function ConsentPanel({ consent, compact }: ConsentPanelProps) {
+export function ConsentPanel({ consent, compact, illustrative }: ConsentPanelProps) {
   return (
     <div className="consent">
       <div className="consent__box consent__box--ok">
@@ -53,6 +54,7 @@ export function ConsentPanel({ consent, compact }: ConsentPanelProps) {
           </div>
         </div>
       )}
+      {illustrative && <div className="consent__illus"><Illustrative /></div>}
     </div>
   );
 }

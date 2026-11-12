@@ -1,6 +1,8 @@
-// Fetch wrapper: adds the demo persona header, parses JSON errors, and broadcasts a `changed` signal after mutations
+// Fetch wrapper: adds the demo persona header (and the admin token when admin mode carries one), parses JSON errors, and broadcasts a `changed` signal after mutations
 // so mounted hooks refetch. Persona is kept in localStorage so a reload stays on the same side.
 import { PERSONA_HEADER, type Persona, type ApiError } from '@shared/api-types';
+import { ADMIN_HEADER } from '@shared/brand';
+import { adminToken } from './admin';
 
 const PERSONA_KEY = 'hda.persona';
 const listeners = new Set<() => void>();
@@ -41,9 +43,13 @@ export class ApiRequestError extends Error {
 }
 
 async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json', [PERSONA_HEADER]: getPersona() };
+  // Admin mode with a token (?admin=<token>): the hosted API wants it on reset / advance.
+  const token = adminToken();
+  if (token) headers[ADMIN_HEADER] = token;
   const res = await fetch(`/api${url}`, {
     method,
-    headers: { 'Content-Type': 'application/json', [PERSONA_HEADER]: getPersona() },
+    headers,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await res.text();

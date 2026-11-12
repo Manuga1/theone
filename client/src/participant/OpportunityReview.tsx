@@ -7,7 +7,7 @@ import type { OpportunityDetail, ContributionItem } from '@shared/api-types';
 import { useApi } from '../hooks';
 import { api } from '../api';
 import { useAction } from '../useAction';
-import { Card, ConsentPanel, Pill, ErrorBox, money } from '../components';
+import { Card, ConsentPanel, Pill, ErrorBox, Illustrative, money } from '../components';
 import { SponsorPill } from './Opportunities';
 
 function contribStatus(c: ContributionItem) {
@@ -69,16 +69,17 @@ export default function OpportunityReviewPage() {
         <div className="right">
           <div className="opp-card__comp">{d.compIsMax ? 'Up to ' : ''}{money(d.compCents)}</div>
           <div className="tiny faint">net to you · platform fee is added on top</div>
+          <Illustrative />
         </div>
       </div>
 
       <div className="grid gap-16" style={{ gridTemplateColumns: 'minmax(0, 1fr) 320px' }}>
         <div className="col gap-16">
           <Card title="Review & consent" sub={`What ${d.consent.organization} receives, for how long, and what you get.`} right={reviewed ? <Pill variant="verified" sm icon>Terms reviewed</Pill> : <Pill variant="partial" sm>Not yet reviewed</Pill>}>
-            <ConsentPanel consent={d.consent} />
+            <ConsentPanel consent={d.consent} illustrative />
           </Card>
           {(active || d.tab === 'past') && d.contributions.length > 0 && (
-            <Card title="Your tasks" sub={active ? 'Sync or submit each task; verification happens automatically and pays into your ledger.' : 'Completed tasks.'}>
+            <Card title="Your tasks" sub={active ? 'Sync or submit each task; verification happens automatically and pays into your ledger.' : 'Completed tasks.'} right={<Illustrative />}>
               <div className="table-wrap">
                 <table className="table">
                   <thead><tr><th>Task</th><th>Method</th><th className="num">Observations</th><th className="num">Compensation</th><th>Status</th><th /></tr></thead>

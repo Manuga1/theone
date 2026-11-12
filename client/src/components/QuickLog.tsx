@@ -9,6 +9,7 @@ import { useAction } from '../useAction';
 import { pushToast } from '../toast';
 import { useConcepts, previewConcept } from '../useConcepts';
 import { ConceptPath } from './ConceptPath';
+import { DemoOnlyHint } from './Brand';
 import { money } from '@shared/fmt';
 
 type SpeechRecognitionLike = {
@@ -144,6 +145,7 @@ export function QuickLog({ compact, placeholder, onFiled }: QuickLogProps) {
           )}
         </div>
       )}
+      <DemoOnlyHint />
       {pending && (
         <div className="quicklog__followup" role="group" aria-label="Follow-up question">
           <div className="quicklog__followup-q">{pending.followUp.question}</div>

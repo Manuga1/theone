@@ -9,9 +9,11 @@ export type StatTileProps = {
   icon?: ReactNode;
   iconTone?: 'accent' | 'green' | 'amber' | 'purple';
   small?: boolean;
+  /** small caption under the tile, e.g. the "illustrative" label on dollar figures */
+  note?: ReactNode;
 };
 
-export function StatTile({ label, value, delta, tone = 'neutral', icon, iconTone = 'accent', small }: StatTileProps) {
+export function StatTile({ label, value, delta, tone = 'neutral', icon, iconTone = 'accent', small, note }: StatTileProps) {
   return (
     <div className="stat">
       <div className="stat__label">
@@ -20,6 +22,7 @@ export function StatTile({ label, value, delta, tone = 'neutral', icon, iconTone
       </div>
       <div className={`stat__value${small ? ' stat__value--sm' : ''}`}>{value}</div>
       {delta !== undefined && delta !== null && <div className={`stat__delta${tone !== 'neutral' ? ` stat__delta--${tone}` : ''}`}>{delta}</div>}
+      {note !== undefined && note !== null && <div className="stat__note">{note}</div>}
     </div>
   );
 }

@@ -1,10 +1,11 @@
 import { Router } from 'express';
 import { graph } from '../db/graph';
-import { IS_BUNDLE } from '../db/paths';
+import { isHosted } from '../db/paths';
 import { DEMO_NOW, DEMO_TODAY } from '@shared/clock';
 import type { DemoResetInput, DemoResetResult, DemoState, Health } from '@shared/api-types';
 import { resetDemo } from '../seed/reset';
 import { classifierName } from '../services/classify';
+import { requireAdmin } from '../middleware/admin';
 
 export const demoRouter = Router();
 
@@ -36,14 +37,15 @@ demoRouter.get('/demo/state', (req, res) => {
     today: DEMO_TODAY,
     now: DEMO_NOW,
     participantPseudonym: detailed?.pseudonym ?? null,
-    hosted: IS_BUNDLE || !!process.env.VERCEL,
+    hosted: isHosted(),
     classifier: classifierName(),
+    adminRequired: isHosted(),
   };
   res.json(body);
 });
 
-/** Wipe + reseed in-process (the UI's "Reset demo" button). Body: { scale?, schemaOnly? }. */
-demoRouter.post('/demo/reset', (req, res, next) => {
+/** Wipe + reseed in-process (the UI's "Reset demo" button). Body: { scale?, schemaOnly? }. Hosted: needs the admin token header. */
+demoRouter.post('/demo/reset', requireAdmin, (req, res, next) => {
   try {
     const body: DemoResetResult = resetDemo((req.body ?? {}) as DemoResetInput);
     res.json(body);

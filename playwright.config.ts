@@ -28,6 +28,8 @@ export default defineConfig({
     { name: 'stage2', testMatch: /stage2\.spec\.ts/, dependencies: ['mobile'] },
     { name: 'notes', testMatch: /notes\.spec\.ts/, dependencies: ['stage2'] },
     { name: 'loop', testMatch: /loop\.spec\.ts/, dependencies: ['notes'], timeout: 300_000 },
+    // Public site and demo honesty checks; read-only, so it runs after the loop has reset the demo to rest state.
+    { name: 'public', testMatch: /public\.spec\.ts/, dependencies: ['loop'] },
   ],
   webServer: {
     command: 'npm run dev',

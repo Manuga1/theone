@@ -10,7 +10,7 @@ import { api, ApiRequestError } from '../api';
 import { useAction } from '../useAction';
 import { pushToast } from '../toast';
 import { useConcepts } from '../useConcepts';
-import { Card, Pill, Tabs, ErrorBox, leafIcon, UploadDropzone, IngestTable, Num } from '../components';
+import { Card, Pill, Tabs, ErrorBox, leafIcon, UploadDropzone, IngestTable, Num, DemoOnlyHint } from '../components';
 import { formatBytes } from '../digest';
 
 const KIND_STYLE: Record<string, { icon: typeof HeartPulse; color: string }> = {
@@ -75,6 +75,7 @@ function SourceTile({ s }: { s: SourceCard }) {
       </div>
       {s.errorText && <div className="source-card__err">{s.errorText}</div>}
       {apple && <div className="tiny faint">Apple Health needs a native app for live sync; import the export file for now{s.importFormats?.length ? ` (${s.importFormats.join(', ')})` : ''}.</div>}
+      {apple && <DemoOnlyHint />}
       <div className="source-card__foot">
         <span className="tiny faint">{connected && s.connectedAt ? `since ${s.connectedAt}` : s.vendor}</span>
         {apple ? <AppleHealthImport s={s} /> : (

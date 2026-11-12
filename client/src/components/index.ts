@@ -7,6 +7,7 @@ export * from './StatusDot';
 export * from './ProgressBar';
 export * from './EmptyState';
 export * from './Splash';
+export * from './Brand';
 export * from './SearchBar';
 export * from './ProvenanceSelect';
 export * from './RevokeDialog';

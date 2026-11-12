@@ -6,8 +6,12 @@ moves: `e2e/screens.spec.ts` captures every screen at rest (desktop and a 390 px
 run, ≈ 15 s) and open <http://localhost:5173>. Every number named here is computed from `data/graph.sqlite`; none is typed
 into the client. On a phone-width window the participant app shows a top bar and a bottom nav instead of the sidebar.
 
-Fixed clock: today is **2026-10-24**. The header has the persona switch (participant ⇄ buyer), the buyer organisation
-selector and **Reset demo** (wipes and reseeds in ≈ 15 s and returns you to the persona's home page).
+Fixed clock: today is **2026-10-24**. Every demo screen carries a banner: "Simulated data. Not real people. Do not enter
+real health information." Say so out loud in the first sentence of any demo. The header has the persona switch
+(participant ⇄ buyer) and the buyer organisation selector. **Reset demo** and **Advance 7 days** appear only in admin
+mode: open the page with `?admin` locally, or `?admin=<DEMO_ADMIN_TOKEN>` on the hosted site. Run live demos from a
+laptop with `npm run dev`; the hosted demo can reset between server instances. For a 10-minute buyer version of this
+script, see `docs/gtm/demo-script-10min.md`.
 
 ## Part 1 — the participant at rest (Alex)
 
@@ -118,7 +122,7 @@ Switch persona → **View as buyer** → the study.
 
 23. **B7**: the child campaign shows Completed 1 / Quality 1 (rendered "<20" under the k-floor); **Open dataset** → **B8**
     carries a *Microbiome* row; tabs Missingness / Provenance / Longitudinal / Ontology; **Analyze in workspace**.
-24. **Reset demo** in the header: wipes `data/`, reseeds in ≈ 15 s, returns to the home page; P8 is back at $2,842.17.
+24. **Reset demo** in the header (admin mode): wipes `data/`, reseeds in ≈ 15 s, returns to the home page; P8 is back at $2,842.17.
 
 ## If you set a mode to "Collect for all" instead
 

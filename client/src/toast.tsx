@@ -23,6 +23,11 @@ export function dismissToast(id: number): void {
 }
 export function toastError(e: unknown, prefix?: string): void {
   let msg = e instanceof Error ? e.message : String(e);
+  if (e instanceof ApiRequestError && e.code === 'admin_required') {
+    // Reset demo / Advance 7 days on the hosted demo without a valid admin token.
+    pushToast('error', `${prefix ? `${prefix}: ` : ''}${e.message} Open the demo with ?admin=<token> in the address to use this control.`, 9000);
+    return;
+  }
   if (e instanceof ApiRequestError) {
     const what = e.status === 404 ? 'Not available yet' : e.status === 403 ? 'Refused' : e.status === 409 ? 'Not allowed in this state' : `HTTP ${e.status}`;
     msg = `${what} (${e.status}) — ${e.message}${e.url ? ` · /api${e.url}` : ''}`;

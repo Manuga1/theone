@@ -7,7 +7,7 @@ import type { ParticipantOpportunities, OpportunityCard, OpportunityTab, Partici
 import { useApi } from '../hooks';
 import { api } from '../api';
 import { useAction } from '../useAction';
-import { Card, Tabs, Pill, ErrorBox, EmptyState, money } from '../components';
+import { Card, Tabs, Pill, ErrorBox, EmptyState, Illustrative, money } from '../components';
 import { dateLong as fmtDate } from '@shared/fmt';
 
 /** Additive (proposed for shared/api-types): why the list is empty, e.g. 'vault mode'. Read defensively until the contract carries it. */
@@ -51,6 +51,7 @@ function OppCard({ o }: { o: OpportunityCard }) {
         <span className="opp-card__comp">{o.compIsMax ? 'Up to ' : ''}{money(o.compCents)}</span>
         <SponsorPill name={o.sponsor} type={o.sponsorType} />
       </div>
+      <Illustrative className="illus--tight" />
       <div className="small muted">{o.purpose}</div>
       <div className="checklist">
         {o.requirements.map((r) => <div className="checklist__item checklist__item--ok" key={r}><Check strokeWidth={3} />{r}</div>)}

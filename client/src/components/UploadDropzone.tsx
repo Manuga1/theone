@@ -6,6 +6,7 @@ import type { UploadFileInput, UploadResult } from '@shared/api-types';
 import { api } from '../api';
 import { pushToast, toastError } from '../toast';
 import { sha256Hex, textSample, formatBytes } from '../digest';
+import { DemoOnlyHint } from './Brand';
 
 export type UploadDropzoneProps = {
   maxFileBytes?: number | null;
@@ -86,6 +87,7 @@ export function UploadDropzone({ maxFileBytes, acceptedTypes, onDone }: UploadDr
           Lab PDFs, MRI / CT (DICOM), genome VCFs, device CSV exports, meal photos. Files are fingerprinted on your device; only the name, size and a hash leave it.
           {maxFileBytes ? ` Up to ${formatBytes(maxFileBytes)} per file.` : ''}
         </div>
+        <DemoOnlyHint />
         <div className="dropzone__actions" onClick={(e) => e.stopPropagation()}>
           <button type="button" className="btn btn--sm btn--primary" disabled={busy} onClick={() => fileRef.current?.click()}><Upload /> Choose files</button>
           <button type="button" className="btn btn--sm" disabled={busy} onClick={() => folderRef.current?.click()}><FolderUp /> Upload a folder</button>

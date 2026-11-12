@@ -178,7 +178,7 @@ describe('participant API', () => {
   });
   it('GET/PUT permissions', async () => {
     const p = (await get('/permissions').expect(200)).body as ParticipantPermissions;
-    expect(p.prohibitedUses).toHaveLength(7);
+    expect(p.prohibitedUses).toHaveLength(11);
     expect(p.prohibitedUses.every((u) => u.fixed)).toBe(true);
     expect(p.categories).toHaveLength(9);
     const u = (await request(app).put('/api/participant/permissions').send({ excludedCategories: ['imaging'], recontactOptIn: false }).expect(200)).body as ParticipantPermissions;

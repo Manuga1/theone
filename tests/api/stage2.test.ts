@@ -161,7 +161,7 @@ describe('stage 2: rewards, check-in, vault mode, onboarding, audit chain', () =
     const s0 = (await get('/onboarding').expect(200)).body as OnboardingState;
     expect(s0).toMatchObject({ completed: true, step: 'done', vaultOnly: false });
     expect(s0.identity).toMatchObject({ status: 'verified', legalName: 'Alex Morgan' });
-    expect(s0.consent.prohibitedUses).toHaveLength(7);
+    expect(s0.consent.prohibitedUses).toHaveLength(11);
     const s1 = (await post('/onboarding', { step: 'restart' }).expect(200)).body as OnboardingState;
     expect(s1).toMatchObject({ completed: false, step: 'identity' });
     expect(((await get('/home')).body as ParticipantHome).onboardingCompleted).toBe(false);

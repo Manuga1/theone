@@ -2,7 +2,7 @@
 // status), study reads (B7), the scoped participant list and recontact (replacement offers).
 import { DEMO_TODAY, nowIso } from '@shared/clock';
 import { CohortCriteria as CriteriaSchema, type CohortCriteria } from '@shared/criteria';
-import { shortName } from '@shared/ontology';
+import { PROHIBITED_USE_KEYS, shortName } from '@shared/ontology';
 import { Rng } from '@shared/rng';
 import type { CampaignVariable } from '@shared/requirement';
 import type { Campaign, CampaignCreate, CampaignStatus, CostLine, Estimate, StudyCounters, StudyDetail, StudyParticipants, StudySummary } from '@shared/api-types';
@@ -152,6 +152,9 @@ export function createCampaign(orgId: number, input: CampaignCreate, db: Db = gr
   const purpose = typeof input.purpose === 'string' && input.purpose.trim() ? input.purpose.trim() : CriteriaSchema.parse(JSON.parse(cohort.criteria_json)).purpose;
   const term = Number.isFinite(Number(input.licenseTermMonths)) && Number(input.licenseTermMonths) > 0 ? Math.round(Number(input.licenseTermMonths)) : 12;
   const useTags = Array.isArray(input.useTags) ? input.useTags.filter((t) => typeof t === 'string') : [];
+  // the same banned-uses list that blocks an organisation also blocks a single campaign tagged with a banned use
+  const banned = useTags.filter((t) => PROHIBITED_USE_KEYS.includes(t));
+  if (banned.length) throw forbidden(`Use "${banned[0].replace(/_/g, ' ')}" conflicts with participant red-lines; a campaign cannot be created for it.`);
   const criteria = CriteriaSchema.parse(JSON.parse(cohort.criteria_json));
   const now = nowIso();
   const id = db.tx(() => {

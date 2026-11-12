@@ -10,6 +10,7 @@ import type { ConceptOption } from '../useConcepts';
 import { ConceptPath } from './ConceptPath';
 import { ConceptPicker } from './ConceptPicker';
 import { Pill } from './Pill';
+import { Illustrative } from './Brand';
 import { formatBytes } from '../digest';
 import { money } from '@shared/fmt';
 import { VALUE_KIND_LABEL } from './ValueKind';
@@ -108,6 +109,7 @@ export function IngestTable({ items, threshold, concepts, groups, onReviewed }: 
   const [open, setOpen] = useState<number | null>(null);
   if (items.length === 0) return <div className="rail__empty">Nothing here yet.</div>;
   return (
+    <>
     <div className="table-wrap">
       <table className="table table--compact table--inbox">
         <thead><tr><th>Item</th><th>Status</th><th>Proposed branch</th><th className="num">Confidence</th><th className="num">Reward</th><th>When</th></tr></thead>
@@ -135,5 +137,7 @@ export function IngestTable({ items, threshold, concepts, groups, onReviewed }: 
         </tbody>
       </table>
     </div>
+    {items.some((it) => it.rewardCents > 0) && <Illustrative />}
+    </>
   );
 }

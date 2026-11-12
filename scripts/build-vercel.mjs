@@ -101,4 +101,5 @@ writeFileSync(
     2,
   ),
 );
+console.log('[build:vercel] hosted build classifies quick logs and uploads by rules; no text is sent to a model provider (HOSTED_CLASSIFIER=claude changes that: only after a data-processing agreement and consent disclosure)');
 console.log(`[build:vercel] .vercel/output ready in ${((Date.now() - t0) / 1000).toFixed(1)} s (seed data ${(bytes / 1e6).toFixed(0)} MB gzipped)`);

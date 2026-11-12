@@ -11,7 +11,7 @@ import { useApi } from '../hooks';
 import { api, ApiRequestError } from '../api';
 import { useAction } from '../useAction';
 import { pushToast } from '../toast';
-import { Card, StatTile, LedgerTable, RevokeDialog, ErrorBox, Money, Num, Pill } from '../components';
+import { Card, StatTile, LedgerTable, RevokeDialog, ErrorBox, Money, Num, Pill, Illustrative } from '../components';
 
 export const shortHash = (h: string | null | undefined, n = 10) => (h ? `${h.slice(0, n)}…${h.slice(-4)}` : '—');
 
@@ -23,7 +23,7 @@ export function LoggingRewardsCard({ served, summaryToday }: { served: boolean; 
   const right = d ? <span className="streak" title="Consecutive days with at least one filed item or a completed check-in"><Flame /> {d.streakDays}-day streak</span> : null;
   return (
     <Card title="Logging rewards" sub="Micro-payments for logs, photos and check-ins. Each is a ledger row that names the funding campaign or the platform." right={right}>
-      {unserved && <div className="small faint">Logging rewards are not served by this API yet{typeof summaryToday === 'number' ? <> · <Money cents={summaryToday} exact /> earned today</> : null}.</div>}
+      {unserved && <div className="small faint">Logging rewards are not served by this API yet{typeof summaryToday === 'number' ? <> · <Money cents={summaryToday} exact /> earned today (<Illustrative />)</> : null}.</div>}
       {q.error && !unserved && <ErrorBox error={q.error} />}
       {d && (
         <div className="col gap-12">
@@ -38,6 +38,7 @@ export function LoggingRewardsCard({ served, summaryToday }: { served: boolean; 
             <div><div className="big-num"><Money cents={d.weekCents} exact /></div><div className="tiny faint">last 7 days</div></div>
             <div><div className="big-num"><Num n={d.streakDays} /></div><div className="tiny faint">day streak</div></div>
           </div>
+          <Illustrative />
           <div className="table-wrap">
             <table className="table table--compact table--rewards">
               <thead><tr><th>Rule</th><th className="num">Pays</th><th className="num">Cap</th><th>Funded by</th><th className="num">Today</th></tr></thead>
@@ -111,6 +112,7 @@ export function AuditCard({ served, summary }: { served: boolean; summary: Parti
               {d.events.length === 0 && <div className="rail__empty">No audit events yet.</div>}
             </div>
             {d.events.length > 6 && <button className="link mt-8" onClick={() => setShowAll((s) => !s)}>{showAll ? 'Show fewer' : `Show all ${d.events.length} loaded`}</button>}
+            {events.some((e) => e.summary.includes('$')) && <div className="mt-8"><Illustrative /></div>}
           </div>
           <div>
             <div className="section-title row gap-6"><Anchor style={{ width: 12, height: 12 }} /> Daily anchors</div>
@@ -157,16 +159,16 @@ export default function EarningsPage() {
         <div><h1 className="h1">Earnings & Asset Ledger</h1><div className="sub">Every license, contribution and logging reward is a ledger row. Amounts shown are net to you.</div></div>
       </div>
       <div className="grid grid--4">
-        <StatTile label="Lifetime earnings" icon={<Wallet />} iconTone="purple" value={<Money cents={d.lifetimeEarningsCents} exact />} delta={`${fees} license fees · ${contribs - micro} contribution payments${micro > 0 ? ` · ${micro} micro rewards` : ''}`} />
+        <StatTile label="Lifetime earnings" icon={<Wallet />} iconTone="purple" value={<Money cents={d.lifetimeEarningsCents} exact />} delta={`${fees} license fees · ${contribs - micro} contribution payments${micro > 0 ? ` · ${micro} micro rewards` : ''}`} note={<Illustrative />} />
         <StatTile label="Active licenses" icon={<ShieldCheck />} iconTone="green" value={<Num n={d.activeLicenses} />} delta="in term today" />
-        <StatTile label="Licensed uses" icon={<FlaskConical />} value={<Num n={d.licensedUses} />} delta={typeof d.rewardsToday === 'number' && d.rewardsToday > 0 ? <>studies that licensed your data · +<Money cents={d.rewardsToday} exact /> logging today</> : 'studies that licensed your data'} />
+        <StatTile label="Licensed uses" icon={<FlaskConical />} value={<Num n={d.licensedUses} />} delta={typeof d.rewardsToday === 'number' && d.rewardsToday > 0 ? <>studies that licensed your data · +<Money cents={d.rewardsToday} exact /> logging today</> : 'studies that licensed your data'} note={typeof d.rewardsToday === 'number' && d.rewardsToday > 0 ? <Illustrative /> : undefined} />
         <StatTile label="Your share" icon={<Percent />} iconTone="amber" value={`${Math.round(d.split.participant * 100)}%`} delta={`platform keeps ${Math.round(d.split.platform * 100)}% of the gross fee`} />
       </div>
       <div className="grid grid--2 gap-16">
         <LoggingRewardsCard served={d.rewardsToday !== undefined} summaryToday={d.rewardsToday} />
         <AuditCard served={d.audit !== undefined} summary={d.audit} />
       </div>
-      <Card title="Asset ledger" sub={`Click a row for the full terms. Revoke is available on licenses still in term.${d.groups && d.groups.length > 0 ? ' Micro rewards are grouped per day; click a day to expand.' : ''}`}>
+      <Card title="Asset ledger" sub={`Click a row for the full terms. Revoke is available on licenses still in term.${d.groups && d.groups.length > 0 ? ' Micro rewards are grouped per day; click a day to expand.' : ''}`} right={<Illustrative />}>
         <LedgerTable entries={d.entries} onRevoke={setRevoking} expandable groups={d.groups} />
       </Card>
       <RevokeDialog open={!!revoking} licenseNumber={revoking?.licenseNumber?.replace('#', '') ?? null} orgName={revoking?.orgName} studyName={revoking?.studyName} busy={revoke.busy} onConfirm={() => revoking && revoke.run(revoking)} onCancel={() => setRevoking(null)} />

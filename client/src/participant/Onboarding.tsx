@@ -10,7 +10,8 @@ import { useApi } from '../hooks';
 import { api, ApiRequestError } from '../api';
 import { useAction } from '../useAction';
 import { Toasts } from '../toast';
-import { Card, ErrorBox, Pill, StepBar, domainStyle, type Step } from '../components';
+import { BRAND } from '@shared/brand';
+import { Card, ErrorBox, Pill, StepBar, domainStyle, BrandMark, DemoBanner, type Step } from '../components';
 
 export const ONBOARDING_STEPS: Step[] = [
   { key: 'identity', label: 'Identity' },
@@ -154,8 +155,9 @@ export default function OnboardingPage() {
 
   return (
     <div className="onboard">
+      <DemoBanner />
       <header className="onboard__head">
-        <div className="shell__brand"><span className="shell__brand-mark">H</span> Health Data Asset</div>
+        <div className="shell__brand"><BrandMark /> {BRAND.name}</div>
         <div className="row gap-8">
           {d?.completed && <Link className="btn btn--sm" to="/p">Skip to my asset</Link>}
           {d && <button className="btn btn--sm" onClick={() => restart.run()} disabled={restart.busy} title="Start again from identity"><RotateCcw /> <span>Restart</span></button>}

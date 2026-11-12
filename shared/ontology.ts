@@ -389,7 +389,11 @@ export const DEFAULT_CAMPAIGN_VARIABLES: CampaignVariable[] = [
   { conceptSlug: 'behavior.nutrition.food_log', mode: 'collect_if_missing', requirement: { historical: { minSpanDays: 30, minProvRank: 2 }, protocol: { method: 'photo', durationDays: 7, minProvRank: 2 } }, compCents: 5500, deviceCostCents: 0 },
 ];
 
-/** Fixed participant red-lines (not editable in the model; see README). */
+/**
+ * Fixed participant red-lines (not editable in the model; see README). This is the ONE banned-uses list: the seeded consent
+ * settings, the permissions and onboarding views, and the organisation declared-use check (services/cohort.ts orgConsent)
+ * all read it. An organisation declaring any of these keys sees zero participants and cannot create cohorts or campaigns.
+ */
 export const PROHIBITED_USES: { key: string; label: string }[] = [
   { key: 'advertising', label: 'Advertising or marketing targeting' },
   { key: 'insurance_underwriting', label: 'Insurance underwriting or pricing' },
@@ -398,5 +402,9 @@ export const PROHIBITED_USES: { key: string; label: string }[] = [
   { key: 're_identification', label: 'Re-identification attempts' },
   { key: 'data_brokerage', label: 'Resale to data brokers' },
   { key: 'credit_scoring', label: 'Credit or lending decisions' },
+  { key: 'housing', label: 'Housing or tenancy decisions' },
+  { key: 'political_targeting', label: 'Political targeting or profiling' },
+  { key: 'litigation', label: 'Litigation or legal claims against participants' },
+  { key: 'gambling_targeting', label: 'Gambling or targeting of behavioural vulnerability' },
 ];
 export const PROHIBITED_USE_KEYS = PROHIBITED_USES.map((p) => p.key);

@@ -9,7 +9,7 @@ import { api, ApiRequestError } from '../api';
 import { useAction } from '../useAction';
 import { pushToast } from '../toast';
 import { useState } from 'react';
-import { Card, StatTile, RadialSignature, Money, Num, Pct, signed, ErrorBox, EmptyState, QuickLog } from '../components';
+import { Card, StatTile, RadialSignature, Money, Num, Pct, signed, ErrorBox, EmptyState, QuickLog, Illustrative, DemoOnlyHint } from '../components';
 
 function greeting(): string {
   // Time of day from the fixed demo clock (never the wall clock).
@@ -55,6 +55,7 @@ function CheckInCard({ summary }: { summary: NonNullable<ParticipantHome['checkI
     return (
       <Card title="Daily check-in" sub={d.date} right={right}>
         <div className="row gap-8"><span className="list__icon list__icon--green"><CalendarCheck2 /></span><div className="small">Done for today{d.rewardCents > 0 ? <> · earned <strong><Money cents={d.rewardCents} exact /></strong></> : null}. Come back tomorrow to keep the streak.</div></div>
+        {d.rewardCents > 0 && <div className="mt-8"><Illustrative /></div>}
       </Card>
     );
   }
@@ -80,6 +81,10 @@ function CheckInCard({ summary }: { summary: NonNullable<ParticipantHome['checkI
           </div>
         ))}
         <button className="btn btn--primary btn--sm mt-12" type="submit" disabled={submit.busy || d.prompts.length === 0}><CalendarCheck2 /> Submit check-in</button>
+        <div className="demo-foot mt-8">
+          <DemoOnlyHint />
+          {d.rewardCents > 0 && <Illustrative />}
+        </div>
       </form>
     </Card>
   );
@@ -110,7 +115,7 @@ export default function HomePage() {
             {d.checkIn && <span className="streak" title="Consecutive days with activity"><Flame /> {d.checkIn.streakDays}</span>}
           </div>
         </div>
-        <Card title="Quick log" sub="Say or type what happened; the graph files it in the right branch." right={!vault && d.rewardsToday ? <span className="pill pill--verified" title="Logging rewards earned today"><Wallet style={{ width: 10, height: 10 }} /> <Money cents={d.rewardsToday.cents} exact /> today</span> : null}>
+        <Card title="Quick log" sub="Say or type what happened; the graph files it in the right branch." right={!vault && d.rewardsToday ? <span className="illus-stack"><span className="pill pill--verified" title="Logging rewards earned today"><Wallet style={{ width: 10, height: 10 }} /> <Money cents={d.rewardsToday.cents} exact /> today</span><Illustrative /></span> : null}>
           <QuickLog />
         </Card>
         <div className="grid grid--4">
@@ -123,8 +128,8 @@ export default function HomePage() {
             </>
           ) : (
             <>
-              <StatTile label="Lifetime earnings" icon={<Wallet />} iconTone="purple" value={<Money cents={d.lifetimeEarningsCents} />} delta={d.rewardsToday && d.rewardsToday.cents > 0 ? <>+<Money cents={d.rewardsToday.cents} exact /> logging today</> : '90% of every license fee'} />
-              <StatTile label="Available opportunities" icon={<Sparkles />} iconTone="amber" value={<Num n={d.opportunities.count} />} delta={d.opportunities.count > 0 ? <>Up to <Money cents={d.opportunities.maxCents} /></> : 'None open'} tone="accent" />
+              <StatTile label="Lifetime earnings" icon={<Wallet />} iconTone="purple" value={<Money cents={d.lifetimeEarningsCents} />} delta={d.rewardsToday && d.rewardsToday.cents > 0 ? <>+<Money cents={d.rewardsToday.cents} exact /> logging today</> : '90% of every license fee'} note={<Illustrative />} />
+              <StatTile label="Available opportunities" icon={<Sparkles />} iconTone="amber" value={<Num n={d.opportunities.count} />} delta={d.opportunities.count > 0 ? <>Up to <Money cents={d.opportunities.maxCents} /></> : 'None open'} tone="accent" note={d.opportunities.count > 0 ? <Illustrative /> : undefined} />
             </>
           )}
         </div>
@@ -144,6 +149,7 @@ export default function HomePage() {
               <span className="big-num"><Money cents={d.rewardsToday.cents} exact /></span>
               <span className="small muted"><Num n={d.rewardsToday.count} /> rewarded item{d.rewardsToday.count === 1 ? '' : 's'}</span>
             </div>
+            <div className="mt-8"><Illustrative /></div>
           </Card>
         )}
         <Card title="What changed this week">
@@ -160,6 +166,7 @@ export default function HomePage() {
             })}
             {d.whatChanged.length === 0 && <div className="rail__empty">Nothing new this week.</div>}
           </div>
+          {d.whatChanged.some((a) => a.text.includes('$')) && <div className="mt-8"><Illustrative /></div>}
         </Card>
         <Card title="How your asset works" soft>
           <div className="why">

@@ -8,7 +8,7 @@ import type { NodeDetail, ValueKind } from '@shared/api-types';
 import { PROVENANCE_LABEL } from '@shared/provenance';
 import { useApi } from '../hooks';
 import {
-  Card, Tabs, StatePill, Pill, LazyBPChart, LineageChain, TimelineRail, ErrorBox, Money, Num, money,
+  Card, Tabs, StatePill, Pill, LazyBPChart, LineageChain, TimelineRail, ErrorBox, Money, Num, money, Illustrative,
   ValueKindGlyph, VALUE_KIND_LABEL, BooleanStrip, TextLog, FactCard, HistoryTable, VariantBreakdown, ClassifiedLine,
 } from '../components';
 import { dateLong as fmtDate } from '@shared/fmt';
@@ -33,7 +33,7 @@ function ResearchCards({ d }: { d: NodeDetail }) {
   return (
     <div className="col gap-8">
       <Card soft tight>
-        <div className="row gap-8"><span className="list__icon list__icon--purple"><FlaskConical /></span><div><div className="strong">Licensed in {d.research.licenses} {d.research.licenses === 1 ? 'study' : 'studies'}</div><div className="small muted">Lifetime earnings: <strong><Money cents={d.research.earningsCents} /></strong></div></div></div>
+        <div className="row gap-8"><span className="list__icon list__icon--purple"><FlaskConical /></span><div><div className="strong">Licensed in {d.research.licenses} {d.research.licenses === 1 ? 'study' : 'studies'}</div><div className="small muted">Lifetime earnings: <strong><Money cents={d.research.earningsCents} /></strong></div><Illustrative /></div></div>
       </Card>
       <Card soft tight>
         <div className="row gap-8"><span className="list__icon list__icon--amber"><Users /></span><div><div className="strong">Currently requested by {d.research.requestedBy} research {d.research.requestedBy === 1 ? 'cohort' : 'cohorts'}</div><div className="small"><Link to="/p/opportunities">View details <ChevronRight size={10} /></Link></div></div></div>
@@ -189,7 +189,7 @@ export default function NodeDetailPage() {
       {tab === 'research' && (
         <div className="col gap-16">
           <ResearchCards d={d} />
-          <Card title="License lines for this variable" sub="Each line is the share of a license fee attributed to this variable.">
+          <Card title="License lines for this variable" sub="Each line is the share of a license fee attributed to this variable." right={d.research.lines.length > 0 ? <Illustrative /> : undefined}>
             {d.research.lines.length === 0 ? <div className="rail__empty">Not licensed yet.</div> : (
               <div className="table-wrap">
                 <table className="table">
