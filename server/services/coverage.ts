@@ -10,49 +10,60 @@ export type CoverageRow = {
   best_prov_rank: number; verified_n: number; self_report_n: number; last_value_num: number | null; protocol_days: number;
 };
 
-export function rebuildCoverage(participantId: number, db: Db = graph()): void {
-  db.tx(() => {
-    db.run('DELETE FROM participant_coverage WHERE participant_id = ?', participantId);
-    db.run(
-      `INSERT INTO participant_coverage (participant_id, concept_id, first_at, last_at, span_days, n_obs, best_prov_rank, verified_n, self_report_n, last_value_num, protocol_days)
-       SELECT o.participant_id, CASE WHEN k.level = 'variant' THEN k.parent_id ELSE o.concept_id END AS leaf_id, MIN(CASE WHEN o.derivation IS NULL THEN o.observed_at END), MAX(CASE WHEN o.derivation IS NULL THEN o.observed_at END),
-              CAST(julianday(substr(MAX(CASE WHEN o.derivation IS NULL THEN o.observed_at END), 1, 10)) - julianday(substr(MIN(CASE WHEN o.derivation IS NULL THEN o.observed_at END), 1, 10)) AS INTEGER),
-              SUM(CASE WHEN o.derivation IS NULL THEN 1 ELSE 0 END),
-              MAX(o.provenance_rank),
-              SUM(CASE WHEN o.derivation IS NULL AND o.provenance_rank >= 2 THEN 1 ELSE 0 END),
-              SUM(CASE WHEN o.derivation IS NULL AND o.provenance_rank = 1 THEN 1 ELSE 0 END),
-              (SELECT o2.value_num FROM observation o2 JOIN concept k2 ON k2.id = o2.concept_id WHERE o2.participant_id = o.participant_id AND (k2.id = (CASE WHEN k.level = 'variant' THEN k.parent_id ELSE o.concept_id END) OR k2.parent_id = (CASE WHEN k.level = 'variant' THEN k.parent_id ELSE o.concept_id END) AND k2.level = 'variant') AND o2.deleted_at IS NULL AND o2.derivation IS NULL AND o2.value_num IS NOT NULL ORDER BY o2.observed_at DESC LIMIT 1),
-              (SELECT COUNT(DISTINCT substr(o3.observed_at, 1, 10)) FROM observation o3 JOIN concept k3 ON k3.id = o3.concept_id WHERE o3.participant_id = o.participant_id AND (k3.id = (CASE WHEN k.level = 'variant' THEN k.parent_id ELSE o.concept_id END) OR k3.parent_id = (CASE WHEN k.level = 'variant' THEN k.parent_id ELSE o.concept_id END) AND k3.level = 'variant') AND o3.deleted_at IS NULL AND o3.provenance_class = 'protocol_measurement' AND o3.contribution_id IS NOT NULL)
-         FROM observation o JOIN concept k ON k.id = o.concept_id
-        WHERE o.participant_id = ? AND o.deleted_at IS NULL
-        GROUP BY (CASE WHEN k.level = 'variant' THEN k.parent_id ELSE o.concept_id END)
-       HAVING SUM(CASE WHEN o.derivation IS NULL THEN 1 ELSE 0 END) > 0`,
-      participantId,
-    );
-  });
+export async function rebuildCoverage(participantId: number, db: Db = graph()): Promise<void> {
+  await db.tx(async () => {
+        await db.run('DELETE FROM participant_coverage WHERE participant_id = ?', participantId);
+        // variant sub-branch observations roll up into their leaf (leaf_id); aggregates first, then per-leaf lookups
+        await db.run(
+          `INSERT INTO participant_coverage (participant_id, concept_id, first_at, last_at, span_days, n_obs, best_prov_rank, verified_n, self_report_n, last_value_num, protocol_days)
+           WITH obs AS (
+             SELECT o.*, CASE WHEN k.level = 'variant' THEN k.parent_id ELSE o.concept_id END AS leaf_id
+               FROM observation o JOIN concept k ON k.id = o.concept_id
+              WHERE o.participant_id = ? AND o.deleted_at IS NULL
+           ), agg AS (
+             SELECT leaf_id, MIN(CASE WHEN derivation IS NULL THEN observed_at END) AS first_at, MAX(CASE WHEN derivation IS NULL THEN observed_at END) AS last_at,
+                    SUM(CASE WHEN derivation IS NULL THEN 1 ELSE 0 END) AS n_obs, MAX(provenance_rank) AS best_prov_rank,
+                    SUM(CASE WHEN derivation IS NULL AND provenance_rank >= 2 THEN 1 ELSE 0 END) AS verified_n,
+                    SUM(CASE WHEN derivation IS NULL AND provenance_rank = 1 THEN 1 ELSE 0 END) AS self_report_n
+               FROM obs GROUP BY leaf_id
+             HAVING SUM(CASE WHEN derivation IS NULL THEN 1 ELSE 0 END) > 0
+           )
+           SELECT ?, a.leaf_id, a.first_at, a.last_at,
+                  CAST(julianday(substr(a.last_at, 1, 10)) - julianday(substr(a.first_at, 1, 10)) AS INTEGER),
+                  a.n_obs, a.best_prov_rank, a.verified_n, a.self_report_n,
+                  (SELECT b.value_num FROM obs b WHERE b.leaf_id = a.leaf_id AND b.derivation IS NULL AND b.value_num IS NOT NULL ORDER BY b.observed_at DESC LIMIT 1),
+                  (SELECT COUNT(DISTINCT substr(b.observed_at, 1, 10)) FROM obs b WHERE b.leaf_id = a.leaf_id AND b.provenance_class = 'protocol_measurement' AND b.contribution_id IS NOT NULL)
+             FROM agg a`,
+          participantId, participantId,
+        );
+      });
 }
 
-export function coverageFor(participantId: number, db: Db = graph()): Map<string, CoverageRow> {
-  const rows = db.all<CoverageRow>(
-    `SELECT c.concept_id, k.slug, c.first_at, c.last_at, c.span_days, c.n_obs, c.best_prov_rank, c.verified_n, c.self_report_n, c.last_value_num, c.protocol_days
+export async function coverageFor(participantId: number, db: Db = graph()): Promise<Map<string, CoverageRow>> {
+  const rows = await db.all<CoverageRow>(
+      `SELECT c.concept_id, k.slug, c.first_at, c.last_at, c.span_days, c.n_obs, c.best_prov_rank, c.verified_n, c.self_report_n, c.last_value_num, c.protocol_days
        FROM participant_coverage c JOIN concept k ON k.id = c.concept_id WHERE c.participant_id = ?`, participantId);
   return new Map(rows.map((r) => [r.slug, r]));
 }
 
 /** Coverage as of an earlier date, computed from observations (used for the "+6 this month" delta). */
-export function coverageAsOf(participantId: number, asOf: string, db: Db = graph()): Map<string, CoverageRow> {
-  const rows = db.all<CoverageRow>(
-    `SELECT CASE WHEN k.level = 'variant' THEN k.parent_id ELSE o.concept_id END AS concept_id, CASE WHEN k.level = 'variant' THEN (SELECT slug FROM concept p WHERE p.id = k.parent_id) ELSE k.slug END AS slug, MIN(CASE WHEN o.derivation IS NULL THEN o.observed_at END) AS first_at, MAX(CASE WHEN o.derivation IS NULL THEN o.observed_at END) AS last_at,
-            CAST(julianday(substr(MAX(CASE WHEN o.derivation IS NULL THEN o.observed_at END), 1, 10)) - julianday(substr(MIN(CASE WHEN o.derivation IS NULL THEN o.observed_at END), 1, 10)) AS INTEGER) AS span_days,
-            SUM(CASE WHEN o.derivation IS NULL THEN 1 ELSE 0 END) AS n_obs,
-            MAX(o.provenance_rank) AS best_prov_rank,
-            SUM(CASE WHEN o.derivation IS NULL AND o.provenance_rank >= 2 THEN 1 ELSE 0 END) AS verified_n,
-            SUM(CASE WHEN o.derivation IS NULL AND o.provenance_rank = 1 THEN 1 ELSE 0 END) AS self_report_n,
+export async function coverageAsOf(participantId: number, asOf: string, db: Db = graph()): Promise<Map<string, CoverageRow>> {
+  const rows = await db.all<CoverageRow>(
+    `WITH obs AS (
+       SELECT o.*, CASE WHEN k.level = 'variant' THEN k.parent_id ELSE o.concept_id END AS leaf_id
+         FROM observation o JOIN concept k ON k.id = o.concept_id
+        WHERE o.participant_id = ? AND o.deleted_at IS NULL AND substr(o.observed_at, 1, 10) <= ?
+     )
+     SELECT obs.leaf_id AS concept_id, lk.slug, MIN(CASE WHEN obs.derivation IS NULL THEN obs.observed_at END) AS first_at, MAX(CASE WHEN obs.derivation IS NULL THEN obs.observed_at END) AS last_at,
+            CAST(julianday(substr(MAX(CASE WHEN obs.derivation IS NULL THEN obs.observed_at END), 1, 10)) - julianday(substr(MIN(CASE WHEN obs.derivation IS NULL THEN obs.observed_at END), 1, 10)) AS INTEGER) AS span_days,
+            SUM(CASE WHEN obs.derivation IS NULL THEN 1 ELSE 0 END) AS n_obs,
+            MAX(obs.provenance_rank) AS best_prov_rank,
+            SUM(CASE WHEN obs.derivation IS NULL AND obs.provenance_rank >= 2 THEN 1 ELSE 0 END) AS verified_n,
+            SUM(CASE WHEN obs.derivation IS NULL AND obs.provenance_rank = 1 THEN 1 ELSE 0 END) AS self_report_n,
             NULL AS last_value_num,
             0 AS protocol_days
-       FROM observation o JOIN concept k ON k.id = o.concept_id
-      WHERE o.participant_id = ? AND o.deleted_at IS NULL AND substr(o.observed_at, 1, 10) <= ?
-      GROUP BY 1
-     HAVING n_obs > 0`, participantId, asOf);
+       FROM obs JOIN concept lk ON lk.id = obs.leaf_id
+      GROUP BY obs.leaf_id, lk.slug
+     HAVING SUM(CASE WHEN obs.derivation IS NULL THEN 1 ELSE 0 END) > 0`, participantId, asOf);
   return new Map(rows.map((r) => [r.slug, r]));
 }

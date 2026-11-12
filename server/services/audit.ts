@@ -48,28 +48,28 @@ export function merkleRoot(hashes: string[]): string | null {
   return level[0];
 }
 
-export function auditHead(db: Db = graph()): string | null {
-  if (!db.tableExists('audit_event')) return null;
-  return db.get<{ hash: string }>('SELECT hash FROM audit_event ORDER BY id DESC LIMIT 1')?.hash ?? null;
+export async function auditHead(db: Db = graph()): Promise<string | null> {
+  if (!await db.tableExists('audit_event')) return null;
+  return (await db.get<{ hash: string }>('SELECT hash FROM audit_event ORDER BY id DESC LIMIT 1'))?.hash ?? null;
 }
 
 /** Append one event (call inside the transaction of the write it records). Returns its id and hash. */
-export function appendAudit(db: Db, e: AuditInput): { id: number; hash: string } {
-  const prev = auditHead(db) ?? GENESIS;
+export async function appendAudit(db: Db, e: AuditInput): Promise<{ id: number; hash: string }> {
+  const prev = await auditHead(db) ?? GENESIS;
   const at = e.at ?? nowIso();
   const payload = e.payload ?? {};
   const hash = hashEvent(prev, { kind: e.kind, refTable: e.refTable ?? null, refId: e.refId ?? null, payload, at });
-  const id = db.run(
-    'INSERT INTO audit_event (participant_id, kind, summary, ref_table, ref_id, payload_json, at, prev_hash, hash, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
-    e.participantId ?? null, e.kind, e.summary, e.refTable ?? null, e.refId ?? null, JSON.stringify(payload), at, prev, hash, nowIso()).lastId;
+  const id = (await db.run(
+      'INSERT INTO audit_event (participant_id, kind, summary, ref_table, ref_id, payload_json, at, prev_hash, hash, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
+      e.participantId ?? null, e.kind, e.summary, e.refTable ?? null, e.refId ?? null, JSON.stringify(payload), at, prev, hash, nowIso())).lastId;
   return { id, hash };
 }
 
 /** Recompute the whole chain from 'genesis'. brokenAt = the first event whose prev_hash or hash does not match. */
-export function verifyChain(db: Db = graph()): AuditVerify {
+export async function verifyChain(db: Db = graph()): Promise<AuditVerify> {
   const verifiedAt = nowIso();
-  if (!db.tableExists('audit_event')) return { ok: true, events: 0, headHash: null, brokenAt: null, verifiedAt };
-  const rows = db.all<Pick<AuditRow, 'id' | 'kind' | 'ref_table' | 'ref_id' | 'payload_json' | 'at' | 'prev_hash' | 'hash'>>('SELECT id, kind, ref_table, ref_id, payload_json, at, prev_hash, hash FROM audit_event ORDER BY id');
+  if (!await db.tableExists('audit_event')) return { ok: true, events: 0, headHash: null, brokenAt: null, verifiedAt };
+  const rows = await db.all<Pick<AuditRow, 'id' | 'kind' | 'ref_table' | 'ref_id' | 'payload_json' | 'at' | 'prev_hash' | 'hash'>>('SELECT id, kind, ref_table, ref_id, payload_json, at, prev_hash, hash FROM audit_event ORDER BY id');
   let prev = GENESIS;
   let brokenAt: number | null = null;
   for (const r of rows) {
@@ -81,51 +81,51 @@ export function verifyChain(db: Db = graph()): AuditVerify {
   return { ok: brokenAt === null, events: rows.length, headHash: rows.length ? rows[rows.length - 1].hash : null, brokenAt, verifiedAt };
 }
 const verifyCache = new WeakMap<Db, { version: number; v: AuditVerify }>();
-/** verifyChain cached per db.writeVersion (the ledger page and home call it on every read). */
-export function verifyCached(db: Db = graph()): AuditVerify {
+/** verifyChain cached per (await db.version()) (the ledger page and home call it on every read). */
+export async function verifyCached(db: Db = graph()): Promise<AuditVerify> {
   const hit = verifyCache.get(db);
-  if (hit && hit.version === db.writeVersion) return hit.v;
-  const v = verifyChain(db);
-  verifyCache.set(db, { version: db.writeVersion, v });
+  if (hit && hit.version === (await db.version())) return hit.v;
+  const v = await verifyChain(db);
+  verifyCache.set(db, { version: (await db.version()), v });
   return v;
 }
 
 /** Daily anchors: one row per past day (strictly before `today`) that has events and no anchor yet. Idempotent; existing anchors are never rewritten. */
-export function ensureAnchors(db: Db = graph(), today = DEMO_TODAY): number {
-  if (!db.tableExists('audit_event') || !db.tableExists('audit_anchor')) return 0;
-  const days = db.all<{ d: string }>('SELECT DISTINCT substr(at, 1, 10) AS d FROM audit_event WHERE substr(at, 1, 10) < ? AND substr(at, 1, 10) NOT IN (SELECT date FROM audit_anchor) ORDER BY d', today);
+export async function ensureAnchors(db: Db = graph(), today = DEMO_TODAY): Promise<number> {
+  if (!await db.tableExists('audit_event') || !await db.tableExists('audit_anchor')) return 0;
+  const days = await db.all<{ d: string }>('SELECT DISTINCT substr(at, 1, 10) AS d FROM audit_event WHERE substr(at, 1, 10) < ? AND substr(at, 1, 10) NOT IN (SELECT date FROM audit_anchor) ORDER BY d', today);
   if (!days.length) return 0;
   const now = nowIso();
-  db.tx(() => {
-    for (const { d } of days) {
-      const hashes = db.all<{ hash: string }>('SELECT hash FROM audit_event WHERE substr(at, 1, 10) = ? ORDER BY id', d).map((r) => r.hash);
-      const root = merkleRoot(hashes);
-      if (!root) continue;
-      db.run("INSERT OR IGNORE INTO audit_anchor (date, root, events, status, note, created_at) VALUES (?,?,?,'simulated',?,?)", d, root, hashes.length, ANCHOR_NOTE, now);
-    }
-  });
+  await db.tx(async () => {
+        for (const { d } of days) {
+          const hashes = (await db.all<{ hash: string }>('SELECT hash FROM audit_event WHERE substr(at, 1, 10) = ? ORDER BY id', d)).map((r) => r.hash);
+          const root = merkleRoot(hashes);
+          if (!root) continue;
+          await db.run("INSERT OR IGNORE INTO audit_anchor (date, root, events, status, note, created_at) VALUES (?,?,?,'simulated',?,?)", d, root, hashes.length, ANCHOR_NOTE, now);
+        }
+      });
   return days.length;
 }
 
 export function toAuditEvent(r: AuditRow): AuditEvent {
   return { id: r.id, at: r.at, kind: r.kind, summary: r.summary, refTable: r.ref_table, refId: r.ref_id, hash: r.hash, prevHash: r.prev_hash };
 }
-export function listAnchors(db: Db = graph(), limit = 60): AuditAnchor[] {
-  if (!db.tableExists('audit_anchor')) return [];
-  return db.all<{ date: string; root: string; events: number; status: AuditAnchor['status']; note: string }>('SELECT date, root, events, status, note FROM audit_anchor ORDER BY date DESC LIMIT ?', limit)
+export async function listAnchors(db: Db = graph(), limit = 60): Promise<AuditAnchor[]> {
+  if (!await db.tableExists('audit_anchor')) return [];
+  return (await db.all<{ date: string; root: string; events: number; status: AuditAnchor['status']; note: string }>('SELECT date, root, events, status, note FROM audit_anchor ORDER BY date DESC LIMIT ?', limit))
     .map((a) => ({ date: a.date, root: a.root, events: a.events, status: a.status, note: a.note }));
 }
 
 /** GET /audit: the participant's own events (newest first), the global head, daily anchors and a fresh verification. */
-export function auditLog(participantId: number | null, db: Db = graph(), limit = 100): AuditLog {
-  if (!db.tableExists('audit_event')) return { events: [], total: 0, headHash: null, anchors: [], verify: verifyChain(db), explanation: AUDIT_EXPLANATION };
-  ensureAnchors(db);
+export async function auditLog(participantId: number | null, db: Db = graph(), limit = 100): Promise<AuditLog> {
+  if (!await db.tableExists('audit_event')) return { events: [], total: 0, headHash: null, anchors: [], verify: await verifyChain(db), explanation: AUDIT_EXPLANATION };
+  await ensureAnchors(db);
   const events = participantId === null
-    ? db.all<AuditRow>('SELECT * FROM audit_event ORDER BY id DESC LIMIT ?', limit)
-    : db.all<AuditRow>('SELECT * FROM audit_event WHERE participant_id = ? ORDER BY id DESC LIMIT ?', participantId, limit);
+    ? await db.all<AuditRow>('SELECT * FROM audit_event ORDER BY id DESC LIMIT ?', limit)
+    : await db.all<AuditRow>('SELECT * FROM audit_event WHERE participant_id = ? ORDER BY id DESC LIMIT ?', participantId, limit);
   const total = participantId === null
-    ? db.get<{ n: number }>('SELECT COUNT(*) AS n FROM audit_event')?.n ?? 0
-    : db.get<{ n: number }>('SELECT COUNT(*) AS n FROM audit_event WHERE participant_id = ?', participantId)?.n ?? 0;
-  const verify = verifyCached(db);
-  return { events: events.map(toAuditEvent), total, headHash: auditHead(db), anchors: listAnchors(db), verify, explanation: AUDIT_EXPLANATION };
+    ? (await db.get<{ n: number }>('SELECT COUNT(*) AS n FROM audit_event'))?.n ?? 0
+    : (await db.get<{ n: number }>('SELECT COUNT(*) AS n FROM audit_event WHERE participant_id = ?', participantId))?.n ?? 0;
+  const verify = await verifyCached(db);
+  return { events: events.map(toAuditEvent), total, headHash: await auditHead(db), anchors: await listAnchors(db), verify, explanation: AUDIT_EXPLANATION };
 }

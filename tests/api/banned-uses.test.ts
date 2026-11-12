@@ -23,11 +23,11 @@ describe('banned uses', () => {
   const post = (url: string, body: unknown, org = 1) => request(app).post(`/api/buyer${url}`).set(as(org)).send(body as object);
 
   beforeAll(async () => {
-    t = seededDbs();
+    t = await seededDbs();
     app = createApp();
     // test-only organisations, one per added use (the seed keeps its four organisations)
     for (const use of ADDED) {
-      orgIds[use] = t.graph.run('INSERT INTO buyer_org (name, type, declared_uses_json, created_at) VALUES (?,?,?,?)', `Test org declaring ${use}`, 'other', JSON.stringify(['market_research', use]), nowIso()).lastId;
+      orgIds[use] = (await t.graph.run('INSERT INTO buyer_org (name, type, declared_uses_json, created_at) VALUES (?,?,?,?)', `Test org declaring ${use}`, 'other', JSON.stringify(['market_research', use]), nowIso())).lastId;
     }
     cohortId = ((await post('/cohorts', { name: 'banned-uses cohort', criteria: DEFAULT_CRITERIA }).expect(201)).body as SavedCohortDetail).id;
   });
@@ -43,7 +43,7 @@ describe('banned uses', () => {
   });
 
   it('every participant carries all eleven red-lines (seeded consent settings and the permissions view)', async () => {
-    const rows = t.graph.all<{ prohibited_uses_json: string; n: number }>('SELECT prohibited_uses_json, COUNT(*) AS n FROM consent_setting GROUP BY prohibited_uses_json');
+    const rows = await t.graph.all<{ prohibited_uses_json: string; n: number }>('SELECT prohibited_uses_json, COUNT(*) AS n FROM consent_setting GROUP BY prohibited_uses_json');
     expect(rows).toHaveLength(1);
     expect(JSON.parse(rows[0].prohibited_uses_json)).toEqual(PROHIBITED_USE_KEYS);
     const p = (await request(app).get('/api/participant/permissions').expect(200)).body as ParticipantPermissions;
@@ -78,13 +78,13 @@ describe('banned uses', () => {
   });
 
   it('a permitted organisation cannot tag a single campaign with a banned use', async () => {
-    const campaigns = () => t.graph.get<{ n: number }>('SELECT COUNT(*) AS n FROM campaign')!.n;
-    const before = campaigns();
+    const campaigns = async () => Number((await t.graph.get<{ n: number }>('SELECT COUNT(*) AS n FROM campaign'))!.n);
+    const before = await campaigns();
     for (const use of ['litigation', 'gambling_targeting', 'advertising']) {
       await post('/campaigns', { cohortId, name: 'x', purpose: 'x', targetN: 30, variables: DEFAULT_CAMPAIGN_VARIABLES, licenseTermMonths: 12, useTags: ['clinical_research', use] }).expect(403);
     }
-    expect(campaigns()).toBe(before);
+    expect(await campaigns()).toBe(before);
     await post('/campaigns', { cohortId, name: 'permitted', purpose: 'x', targetN: 30, variables: DEFAULT_CAMPAIGN_VARIABLES, licenseTermMonths: 12, useTags: ['clinical_research'] }).expect(201);
-    expect(campaigns()).toBe(before + 1);
+    expect(await campaigns()).toBe(before + 1);
   });
 });

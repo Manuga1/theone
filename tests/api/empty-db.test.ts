@@ -8,7 +8,7 @@ import { seededDbs } from '../helpers/db';
 
 describe('empty (schema-only) database', () => {
   let app: ReturnType<typeof createApp>;
-  beforeAll(() => { seededDbs({ schemaOnly: true }); app = createApp(); });
+  beforeAll(async () => { await seededDbs({ schemaOnly: true }); app = createApp(); });
 
   it('health / state report ready but not seeded', async () => {
     const h = (await request(app).get('/api/health').expect(200)).body as Health;

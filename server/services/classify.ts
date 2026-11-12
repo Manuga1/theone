@@ -21,8 +21,8 @@ import { concepts, conceptPath, type ConceptRow } from './ontology';
 const specCache = new WeakMap<Db, { source: object; specs: LeafSpec[] }>();
 
 /** Leaf specs (synonyms, follow-ups, context rules, existing variants) from the concept table; cached per concept-cache entry. */
-export function leafSpecs(db: Db = graph()): LeafSpec[] {
-  const entry = concepts(db);
+export async function leafSpecs(db: Db = graph()): Promise<LeafSpec[]> {
+  const entry = await concepts(db);
   const hit = specCache.get(db);
   if (hit && hit.source === entry) return hit.specs;
   const { rows, byId, children } = entry;
@@ -32,7 +32,7 @@ export function leafSpecs(db: Db = graph()): LeafSpec[] {
     const parent = c.parent_id ? byId.get(c.parent_id) : undefined;
     const variants: VariantSpec[] = (children.get(c.id) ?? []).filter((k) => k.level === 'variant').map((k) => variantSpecOf(k, c));
     specs.push({
-      slug: c.slug, name: c.name, path: conceptPath(c.slug, db), valueKind: c.value_kind ?? 'text', unit: c.unit, method: c.collection_method,
+      slug: c.slug, name: c.name, path: await conceptPath(c.slug, db), valueKind: c.value_kind ?? 'text', unit: c.unit, method: c.collection_method,
       synonyms: safeJson<string[]>(c.synonyms_json, []), followUps: safeJson<FollowUpDef[] | null>(c.follow_ups_json, null) ?? [],
       contextRule: safeJson<ContextRule | null>(c.context_rule_json, null), variants, parentSlug: parent?.slug ?? c.slug.split('.').slice(0, 2).join('.'),
     });
@@ -49,12 +49,12 @@ function safeJson<T>(s: string | null | undefined, fallback: T): T {
   try { return JSON.parse(s) as T; } catch { return fallback; }
 }
 /** Accepted (auto-filed or accepted) ingest items per concept: the per-concept relaxation counter. */
-export function acceptedCount(conceptId: number, db: Db = graph()): number {
-  if (!db.tableExists('ingest_item')) return 0;
-  return db.get<{ n: number }>("SELECT COUNT(*) AS n FROM ingest_item WHERE concept_id = ? AND status IN ('auto_filed', 'accepted')", conceptId)?.n ?? 0;
+export async function acceptedCount(conceptId: number, db: Db = graph()): Promise<number> {
+  if (!await db.tableExists('ingest_item')) return 0;
+  return (await db.get<{ n: number }>("SELECT COUNT(*) AS n FROM ingest_item WHERE concept_id = ? AND status IN ('auto_filed', 'accepted')", conceptId))?.n ?? 0;
 }
-export function thresholdForConcept(conceptId: number | null, db: Db = graph()): number {
-  return thresholdFor(conceptId ? acceptedCount(conceptId, db) : 0);
+export async function thresholdForConcept(conceptId: number | null, db: Db = graph()): Promise<number> {
+  return thresholdFor(conceptId ? await acceptedCount(conceptId, db) : 0);
 }
 
 // ------------------------------------------------------------------------------------------------ Claude
@@ -118,10 +118,10 @@ export function classifierDisabledReason(): string | null {
 }
 
 let promptCache: { source: object; text: string } | null = null;
-function ontologyPrompt(db: Db): string {
-  const source = leafSpecs(db);
+async function ontologyPrompt(db: Db): Promise<string> {
+  const source = await leafSpecs(db);
   if (promptCache && promptCache.source === source) return promptCache.text;
-  const compact = leafSpecs(db).map((l) => ({
+  const compact = (await leafSpecs(db)).map((l) => ({
     slug: l.slug, name: l.name, valueKind: l.valueKind, unit: l.unit, synonyms: l.synonyms,
     followUps: l.followUps.map((f) => ({ attribute: f.attribute, question: f.question, options: f.options ?? null, createsSubBranch: f.createsSubBranch })),
     variants: l.variants.map((v) => ({ slug: v.slug, [v.attribute]: v.value })),
@@ -153,7 +153,7 @@ async function askClaude(input: string, db: Db): Promise<ClaudeProposal | null> 
     const r = await c.messages.parse({
       model: process.env.CLASSIFIER_MODEL ?? 'claude-opus-5-5',
       max_tokens: 2048,
-      system: [{ type: 'text', text: ontologyPrompt(db), cache_control: { type: 'ephemeral' } }],
+      system: [{ type: 'text', text: await ontologyPrompt(db), cache_control: { type: 'ephemeral' } }],
       messages: [{ role: 'user', content: input }],
       output_config: { format: zodOutputFormat(ProposalSchema) },
     });
@@ -204,16 +204,16 @@ export type TextResult = TextClassification & { status: 'auto_filed' | 'needs_re
 
 /** Classify a quick log / voice transcript / check-in answer. */
 export async function classifyQuickLog(text: string, db: Db = graph()): Promise<TextResult> {
-  const specs = leafSpecs(db);
+  const specs = await leafSpecs(db);
   const rules = classifyText(text, specs, nowIso());
   const claude = await askClaude(`Current time: ${nowIso()}\nQuick log: ${text}`, db);
   const proposal = merge(rules.proposal, claude, specs);
-  return finish({ ...rules, proposal }, db);
+  return await finish({ ...rules, proposal }, db);
 }
-function finish(r: TextClassification, db: Db): TextResult {
-  const leafId = r.proposal.conceptSlug ? concepts(db).bySlug.get(r.proposal.conceptSlug)?.id ?? null : null;
-  const threshold = thresholdForConcept(leafId, db);
-  const status = r.proposal.followUp && !r.proposal.newConcept && r.proposal.conceptSlug && r.proposal.confidence >= threshold ? 'follow_up' : decide(r.proposal, leafId ? acceptedCount(leafId, db) : 0);
+async function finish(r: TextClassification, db: Db): Promise<TextResult> {
+  const leafId = r.proposal.conceptSlug ? (await concepts(db)).bySlug.get(r.proposal.conceptSlug)?.id ?? null : null;
+  const threshold = await thresholdForConcept(leafId, db);
+  const status = r.proposal.followUp && !r.proposal.newConcept && r.proposal.conceptSlug && r.proposal.confidence >= threshold ? 'follow_up' : decide(r.proposal, leafId ? await acceptedCount(leafId, db) : 0);
   return { ...r, status, threshold };
 }
 
@@ -221,13 +221,13 @@ export type FileResult = { route: FileRoute; status: 'auto_filed' | 'needs_revie
 
 /** Classify an uploaded file's metadata (name / size / MIME / text sample). */
 export async function classifyUpload(file: UploadFileInput, db: Db = graph()): Promise<FileResult> {
-  const specs = leafSpecs(db);
+  const specs = await leafSpecs(db);
   const route = routeFile(file, specs, nowIso());
   if (route.kind !== 'proposal') return { route, status: null, threshold: BRANCHING.reviewThreshold };
   const claude = await askClaude(`Current time: ${nowIso()}\nUploaded file (metadata only): name=${file.name} bytes=${file.bytes} mime=${file.mime || 'unknown'}${file.textSample ? `\nText sample:\n${file.textSample.slice(0, 4000)}` : ''}`, db);
   const proposal = merge(route.proposal, claude, specs);
-  const leafId = proposal.conceptSlug ? concepts(db).bySlug.get(proposal.conceptSlug)?.id ?? null : null;
-  const threshold = thresholdForConcept(leafId, db);
-  const status = decide(proposal, leafId ? acceptedCount(leafId, db) : 0);
+  const leafId = proposal.conceptSlug ? (await concepts(db)).bySlug.get(proposal.conceptSlug)?.id ?? null : null;
+  const threshold = await thresholdForConcept(leafId, db);
+  const status = decide(proposal, leafId ? await acceptedCount(leafId, db) : 0);
   return { route: { ...route, proposal, reviewReason: status === 'needs_review' ? route.reviewReason ?? (proposal.newConcept ? 'Proposes a new branch' : `Confidence ${proposal.confidence} is below ${threshold}`) : null }, status, threshold };
 }

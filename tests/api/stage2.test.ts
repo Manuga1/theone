@@ -20,11 +20,11 @@ describe('stage 2: rewards, check-in, vault mode, onboarding, audit chain', () =
   let app: ReturnType<typeof createApp>;
   let pid: number;
   const buyer = { [PERSONA_HEADER]: 'buyer:1' };
-  beforeAll(() => { t = seededDbs(); app = createApp(); pid = alexId(t.graph); });
+  beforeAll(async () => { t = await seededDbs(); app = createApp(); pid = await alexId(t.graph); });
   const get = (url: string) => request(app).get(`/api/participant${url}`);
   const post = (url: string, body: unknown = {}) => request(app).post(`/api/participant${url}`).send(body as object);
   const put = (url: string, body: unknown) => request(app).put(`/api/participant${url}`).send(body as object);
-  const audits = (kind: string) => t.graph.get<{ n: number }>('SELECT COUNT(*) AS n FROM audit_event WHERE participant_id = ? AND kind = ?', pid, kind)!.n;
+  const audits = async (kind: string) => (await t.graph.get<{ n: number }>('SELECT COUNT(*) AS n FROM audit_event WHERE participant_id = ? AND kind = ?', pid, kind))!.n;
 
   it('GET /rewards → the three seeded rules, nothing earned yet, a 5-day streak', async () => {
     const r = (await get('/rewards').expect(200)).body as LoggingRewards;
@@ -101,14 +101,14 @@ describe('stage 2: rewards, check-in, vault mode, onboarding, audit chain', () =
     expect(r.items.every((i) => i.kind === 'checkin' && i.status === 'auto_filed')).toBe(true);
     const bed = (await get('/nodes/behavior.sleep.bedtime_log')).body as NodeDetail;
     expect(bed.lastLoggedAt?.slice(0, 10)).toBe(DEMO_TODAY);
-    expect(t.graph.get<{ v: number }>("SELECT value_num AS v FROM observation o JOIN concept c ON c.id = o.concept_id WHERE c.slug = 'behavior.sleep.bedtime_log' ORDER BY o.observed_at DESC LIMIT 1")!.v).toBe(23.5);
+    expect((await t.graph.get<{ v: number }>("SELECT value_num AS v FROM observation o JOIN concept c ON c.id = o.concept_id WHERE c.slug = 'behavior.sleep.bedtime_log' ORDER BY o.observed_at DESC LIMIT 1"))!.v).toBe(23.5);
     const yoga = (await get('/nodes/behavior.exercise.session')).body as NodeDetail;
     expect(yoga.variants?.map((v) => v.name)).toEqual(['run', 'yoga']); // the answer created the yoga sub-branch
-    expect(t.graph.get<{ v: number }>("SELECT value_num AS v FROM observation o JOIN concept c ON c.id = o.concept_id WHERE c.slug = 'physiology.metabolic.weight' ORDER BY o.observed_at DESC LIMIT 1")!.v).toBe(82.6);
+    expect((await t.graph.get<{ v: number }>("SELECT value_num AS v FROM observation o JOIN concept c ON c.id = o.concept_id WHERE c.slug = 'physiology.metabolic.weight' ORDER BY o.observed_at DESC LIMIT 1"))!.v).toBe(82.6);
     const after = (await get('/checkin')).body as CheckIn;
     expect(after.done).toBe(true);
     expect(after.prompts.map((p) => p.conceptSlug)).not.toContain('behavior.sleep.bedtime_log');
-    expect(t.graph.get<{ done: number; a: string }>('SELECT done, answers_json AS a FROM checkin_day WHERE participant_id = ? AND date = ?', pid, DEMO_TODAY)).toMatchObject({ done: 1 });
+    expect((await t.graph.get<{ done: number; a: string }>('SELECT done, answers_json AS a FROM checkin_day WHERE participant_id = ? AND date = ?', pid, DEMO_TODAY))).toMatchObject({ done: 1 });
     expect(((await get('/home')).body as ParticipantHome).checkIn).toMatchObject({ done: true, streakDays: 5 });
     await post('/checkin', {}).expect(400);
     await post('/checkin', { answers: [{ id: 'nope', value: 1 }] }).expect(400);
@@ -119,14 +119,14 @@ describe('stage 2: rewards, check-in, vault mode, onboarding, audit chain', () =
   it('vault mode: PUT /permissions {vaultOnly} audits; opportunities empty with a reason; accept 403; no rewards; cohort engine and B1 exclude the participant', async () => {
     const tilesBefore = ((await request(app).get('/api/buyer/home').set(buyer)).body as BuyerHome).tiles;
     invalidateCohortCache(t.graph);
-    const baseBefore = evaluateCohort(DEFAULT_CRITERIA, { orgId: 1, skipCache: true }, t.graph).recontactBase;
+    const baseBefore = (await evaluateCohort(DEFAULT_CRITERIA, { orgId: 1, skipCache: true }, t.graph)).recontactBase;
     const opp = ((await get('/opportunities?tab=available')).body as ParticipantOpportunities).items[0];
     await post(`/opportunities/${opp.id}/view`).expect(200);
     await post(`/opportunities/${opp.id}/review`).expect(200);
 
     const p = (await put('/permissions', { vaultOnly: true }).expect(200)).body as ParticipantPermissions;
     expect(p.vaultOnly).toBe(true);
-    expect(audits('vault_mode_changed')).toBe(1);
+    expect((await audits('vault_mode_changed'))).toBe(1);
     const o = (await get('/opportunities').expect(200)).body as ParticipantOpportunities;
     expect(o.items).toEqual([]);
     expect(o.counts).toEqual({ available: 0, in_progress: 0, past: 0 });
@@ -147,15 +147,15 @@ describe('stage 2: rewards, check-in, vault mode, onboarding, audit chain', () =
     const tiles = ((await request(app).get('/api/buyer/home').set(buyer)).body as BuyerHome).tiles;
     expect(tiles.availableParticipants).toBe(tilesBefore.availableParticipants - 1);
     expect(tiles.recontactable).toBe(tilesBefore.recontactable - 1);
-    expect(evaluateCohort(DEFAULT_CRITERIA, { orgId: 1, skipCache: true }, t.graph).recontactBase).toBe(baseBefore - 1);
+    expect((await evaluateCohort(DEFAULT_CRITERIA, { orgId: 1, skipCache: true }, t.graph)).recontactBase).toBe(baseBefore - 1);
     // switching back restores everything and audits again
     await put('/permissions', { vaultOnly: false }).expect(200);
-    expect(audits('vault_mode_changed')).toBe(2);
+    expect((await audits('vault_mode_changed'))).toBe(2);
     expect(((await get('/opportunities?tab=available')).body as ParticipantOpportunities).items.length).toBe(4);
     expect(((await request(app).get('/api/buyer/home').set(buyer)).body as BuyerHome).tiles).toEqual(tilesBefore);
     expect(((await get('/rewards')).body as LoggingRewards).enabled).toBe(true);
     await put('/permissions', { vaultOnly: false }).expect(200); // no-op: no third event
-    expect(audits('vault_mode_changed')).toBe(2);
+    expect((await audits('vault_mode_changed'))).toBe(2);
   });
   it('onboarding: Alex is onboarded; restart → identity → consent → mode → done, every step audited', async () => {
     const s0 = (await get('/onboarding').expect(200)).body as OnboardingState;
@@ -176,8 +176,8 @@ describe('stage 2: rewards, check-in, vault mode, onboarding, audit chain', () =
     expect(s4.completed).toBe(false);
     const s5 = (await post('/onboarding', { step: 'done' }).expect(200)).body as OnboardingState;
     expect(s5).toMatchObject({ completed: true, step: 'done' });
-    expect(t.graph.get<{ o: string }>('SELECT onboarded_at AS o FROM participant WHERE id = ?', pid)!.o).toBe('2026-10-24T14:00:00Z');
-    for (const k of ['onboarding_restarted', 'onboarding_identity', 'onboarding_consent', 'onboarding_mode', 'onboarding_completed']) expect(audits(k), k).toBe(1);
+    expect((await t.graph.get<{ o: string }>('SELECT onboarded_at AS o FROM participant WHERE id = ?', pid))!.o).toBe('2026-10-24T14:00:00Z');
+    for (const k of ['onboarding_restarted', 'onboarding_identity', 'onboarding_consent', 'onboarding_mode', 'onboarding_completed']) expect((await audits(k)), k).toBe(1);
     await post('/onboarding', { step: 'bogus' }).expect(400);
     await put('/permissions', { commercialOk: true, excludedCategories: [] }).expect(200);
   });
@@ -202,31 +202,31 @@ describe('stage 2: rewards, check-in, vault mode, onboarding, audit chain', () =
     expect(sources.sources.find((s) => s.kind === 'apple_health')).toMatchObject({ status: 'available', health: 'never_synced', importFormats: ['export.xml'], kindGroup: 'wearable' });
     expect(sources.sources.find((s) => s.vendor === 'Color Genomics')).toMatchObject({ kindGroup: 'genomics', health: 'ok' });
     await post(`/sources/${scale.id}/disconnect`).expect(200);
-    expect(audits('source_disconnected')).toBe(1);
+    expect((await audits('source_disconnected'))).toBe(1);
     expect(((await get('/sources')).body as ParticipantSources).sources.find((s) => s.id === scale.id)).toMatchObject({ health: 'needs_attention' });
     await post(`/sources/${scale.id}/connect`).expect(200);
     const ledger = (await get('/ledger')).body as ParticipantLedger;
     const active = ledger.entries.find((e) => e.canRevoke)!;
     await post(`/licenses/${active.licenseId}/revoke`).expect(200);
-    expect(audits('license_revoked')).toBe(1);
+    expect((await audits('license_revoked'))).toBe(1);
     await request(app).delete('/api/participant/categories/environment').expect(200);
-    expect(audits('category_deleted')).toBe(1);
+    expect((await audits('category_deleted'))).toBe(1);
     // a review that creates a branch is audited
     const weak = (await post('/log', { text: 'temperature 38.1 C' })).body as QuickLogResult;
     expect(weak.status).toBe('needs_review');
     const branch = (await post(`/ingest/${weak.item.id}/review`, { action: 'create_branch', newConcept: { name: 'Body temperature', parentSlug: 'clinical.vitals', valueKind: 'continuous', unit: '°C' } }).expect(200)).body as ReviewResult;
     expect(branch.createdConcept?.slug).toBe('clinical.vitals.body_temperature');
-    expect(audits('branch_created')).toBe(4); // espresso + run (seed) + yoga (check-in) + body temperature (review)
+    expect((await audits('branch_created'))).toBe(4); // espresso + run (seed) + yoga (check-in) + body temperature (review)
     const v = (await post('/audit/verify').expect(200)).body as AuditVerify;
     expect(v.ok).toBe(true);
-    expect(v.events).toBe(t.graph.get<{ n: number }>('SELECT COUNT(*) AS n FROM audit_event')!.n);
+    expect(v.events).toBe((await t.graph.get<{ n: number }>('SELECT COUNT(*) AS n FROM audit_event'))!.n);
     // tamper with the oldest license event → broken at that row, the ledger page says so
-    const victim = t.graph.get<{ id: number; payload_json: string }>("SELECT id, payload_json FROM audit_event WHERE kind = 'license_created' ORDER BY id LIMIT 1")!;
-    t.graph.run('UPDATE audit_event SET payload_json = ? WHERE id = ?', victim.payload_json.replace(/"participantCents":\d+/, '"participantCents":1'), victim.id);
+    const victim = (await t.graph.get<{ id: number; payload_json: string }>("SELECT id, payload_json FROM audit_event WHERE kind = 'license_created' ORDER BY id LIMIT 1"))!;
+    await t.graph.run('UPDATE audit_event SET payload_json = ? WHERE id = ?', victim.payload_json.replace(/"participantCents":\d+/, '"participantCents":1'), victim.id);
     const broken = (await post('/audit/verify').expect(200)).body as AuditVerify;
     expect(broken).toMatchObject({ ok: false, brokenAt: victim.id });
     expect(((await get('/audit')).body as AuditLog).verify.brokenAt).toBe(victim.id);
-    t.graph.run('UPDATE audit_event SET payload_json = ? WHERE id = ?', victim.payload_json, victim.id);
+    await t.graph.run('UPDATE audit_event SET payload_json = ? WHERE id = ?', victim.payload_json, victim.id);
     expect(((await post('/audit/verify')).body as AuditVerify).ok).toBe(true);
   });
   it('buyer: the dataset provenance tab carries the classifier-filed share; GET /buyer/ontology marks concepts created in the last 30 days', async () => {

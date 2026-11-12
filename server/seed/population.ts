@@ -35,7 +35,7 @@ const S = {
   coverage: 'INSERT INTO participant_coverage (participant_id, concept_id, first_at, last_at, span_days, n_obs, best_prov_rank, verified_n, self_report_n, last_value_num, protocol_days) VALUES (?,?,?,?,?,?,?,?,?,?,0)',
 };
 
-export function seedPopulation(ctx: SeedCtx): { tiers: TierQuota[]; generated: number } {
+export async function seedPopulation(ctx: SeedCtx): Promise<{ tiers: TierQuota[]; generated: number }> {
   const tiers = scaledTiers(ctx.scale);
   const db = ctx.graph;
   const now = nowIso();
@@ -69,84 +69,84 @@ export function seedPopulation(ctx: SeedCtx): { tiers: TierQuota[]; generated: n
     const rng = ctx.rng.fork(`tier${t.tier}`);
     const members = buildTier(t, rng);
     const n = members.length;
-    db.tx(() => {
-      for (let i = 0; i < n; i++) {
-        const m = members[i];
-        const pid = db.run(S.participant, pseudonym(rng), m.sex, m.birthYear, m.country, m.region, m.enrolledAt, m.tier, now).lastId;
-        db.run(S.consent, pid, prohibited, m.excludedDomain ? JSON.stringify([m.excludedDomain]) : '[]', m.recontact ? 1 : 0,
-          rng.bool(0.2) ? 1 : 0, rng.bool(0.85) ? 1 : 0, rng.bool(0.8) ? 1 : 0, rng.bool(0.9) ? 1 : 0, rng.bool(0.85) ? 1 : 0, now, now);
-        for (const c of m.conditions) {
-          db.run(S.condition, pid, condSlug[c], ago(rng.int(365, 365 * 12)), 'active', 'clinical_source', now);
-        }
-        // --- coverage rows ---
-        if (m.ehrSpan !== null) {
-          const lastN = rng.int(0, 60);
-          cov(db, pid, C.ehr, ago(lastN + m.ehrSpan), ago(lastN), m.ehrSpan, Math.floor(m.ehrSpan / 90) + 1, 4, null);
-        }
-        if (m.exome) {
-          const at = ago(rng.int(30, 365 * 5));
-          cov(db, pid, C.exome, at, at, 0, 1, 4, null);
-        }
-        if (m.bp !== 'none') {
-          const lastN = rng.int(0, m.bp === 'ok' ? 10 : 90);
-          const span = m.bp === 'ok' ? rng.int(365, 900) : rng.int(14, 300);
-          const rank = m.bp === 'self' ? 1 : 3;
-          cov(db, pid, C.bp, ago(lastN + span), ago(lastN), span, rank === 1 ? rng.int(3, 20) : Math.round(span * 2.4), rank, rng.int(118, 146));
-        }
-        if (m.nutrition !== 'none') {
-          const lastN = rng.int(0, m.nutrition === 'ok' ? 7 : 60);
-          const span = m.nutrition === 'ok' ? rng.int(30, 420) : rng.int(2, 25);
-          cov(db, pid, C.food, ago(lastN + span), ago(lastN), span, Math.round(span * 2.6), 2, null);
-        }
-        if (m.a1c !== null) {
-          const lastN = rng.int(5, 200);
-          const span = rng.int(0, 365 * 6);
-          cov(db, pid, C.a1c, ago(lastN + span), ago(lastN), span, Math.floor(span / 180) + 1, 4, m.a1c);
-        }
-        if (m.lipid) {
-          const lastN = rng.int(5, 400);
-          const span = rng.int(0, 365 * 6);
-          cov(db, pid, C.lipid, ago(lastN + span), ago(lastN), span, Math.floor(span / 365) + 1, 4, rng.int(150, 260));
-        }
-        if (m.imaging) {
-          const at = ago(rng.int(30, 365 * 4));
-          cov(db, pid, C.mri, at, at, 0, 1, 4, null);
-        }
-        if (m.cgm) {
-          const lastN = rng.int(0, 120);
-          const span = rng.int(14, 180);
-          cov(db, pid, C.cgm, ago(lastN + span), ago(lastN), span, span * 96, 3, rng.int(120, 190));
-        }
-        if (m.meds) {
-          const span = rng.int(180, 365 * 8);
-          cov(db, pid, C.meds, ago(span), ago(rng.int(0, 30)), span, rng.int(1, 6), 4, null);
-        }
-        if (m.quasi) {
-          // quasi-detailed summaries for the ready-now cohort and potential study completers
-          const wearSpan = rng.int(200, 1200);
-          const first = ago(wearSpan);
-          const last = ago(rng.int(0, 2));
-          cov(db, pid, C.hr, first, last, wearSpan, wearSpan, 3, rng.int(58, 78));
-          cov(db, pid, C.hrv, first, last, wearSpan, wearSpan, 3, rng.int(22, 60));
-          cov(db, pid, C.sleep, first, last, wearSpan, wearSpan, 3, Number(rng.float(5.8, 7.9).toFixed(1)));
-          cov(db, pid, C.steps, first, last, wearSpan, wearSpan, 3, rng.int(3500, 11000));
-          cov(db, pid, C.weight, first, last, wearSpan, Math.floor(wearSpan / 7), 3, Number(rng.float(62, 118).toFixed(1)));
-          cov(db, pid, C.problems, ago(rng.int(365, 3650)), ago(rng.int(0, 365)), 0, m.conditions.length, 4, null);
-          cov(db, pid, C.age, m.enrolledAt, m.enrolledAt, 0, 1, 4, DEMO_YEAR - m.birthYear);
-          cov(db, pid, C.sex, m.enrolledAt, m.enrolledAt, 0, 1, 4, null);
-          cov(db, pid, C.loc, m.enrolledAt, m.enrolledAt, 0, 1, 4, null);
-        }
-      }
-    });
+    await db.tx(async () => {
+            for (let i = 0; i < n; i++) {
+              const m = members[i];
+              const pid = (await db.run(S.participant, pseudonym(rng), m.sex, m.birthYear, m.country, m.region, m.enrolledAt, m.tier, now)).lastId;
+              await db.run(S.consent, pid, prohibited, m.excludedDomain ? JSON.stringify([m.excludedDomain]) : '[]', m.recontact ? 1 : 0,
+                          rng.bool(0.2) ? 1 : 0, rng.bool(0.85) ? 1 : 0, rng.bool(0.8) ? 1 : 0, rng.bool(0.9) ? 1 : 0, rng.bool(0.85) ? 1 : 0, now, now);
+              for (const c of m.conditions) {
+                await db.run(S.condition, pid, condSlug[c], ago(rng.int(365, 365 * 12)), 'active', 'clinical_source', now);
+              }
+              // --- coverage rows ---
+              if (m.ehrSpan !== null) {
+                const lastN = rng.int(0, 60);
+                await cov(db, pid, C.ehr, ago(lastN + m.ehrSpan), ago(lastN), m.ehrSpan, Math.floor(m.ehrSpan / 90) + 1, 4, null);
+              }
+              if (m.exome) {
+                const at = ago(rng.int(30, 365 * 5));
+                await cov(db, pid, C.exome, at, at, 0, 1, 4, null);
+              }
+              if (m.bp !== 'none') {
+                const lastN = rng.int(0, m.bp === 'ok' ? 10 : 90);
+                const span = m.bp === 'ok' ? rng.int(365, 900) : rng.int(14, 300);
+                const rank = m.bp === 'self' ? 1 : 3;
+                await cov(db, pid, C.bp, ago(lastN + span), ago(lastN), span, rank === 1 ? rng.int(3, 20) : Math.round(span * 2.4), rank, rng.int(118, 146));
+              }
+              if (m.nutrition !== 'none') {
+                const lastN = rng.int(0, m.nutrition === 'ok' ? 7 : 60);
+                const span = m.nutrition === 'ok' ? rng.int(30, 420) : rng.int(2, 25);
+                await cov(db, pid, C.food, ago(lastN + span), ago(lastN), span, Math.round(span * 2.6), 2, null);
+              }
+              if (m.a1c !== null) {
+                const lastN = rng.int(5, 200);
+                const span = rng.int(0, 365 * 6);
+                await cov(db, pid, C.a1c, ago(lastN + span), ago(lastN), span, Math.floor(span / 180) + 1, 4, m.a1c);
+              }
+              if (m.lipid) {
+                const lastN = rng.int(5, 400);
+                const span = rng.int(0, 365 * 6);
+                await cov(db, pid, C.lipid, ago(lastN + span), ago(lastN), span, Math.floor(span / 365) + 1, 4, rng.int(150, 260));
+              }
+              if (m.imaging) {
+                const at = ago(rng.int(30, 365 * 4));
+                await cov(db, pid, C.mri, at, at, 0, 1, 4, null);
+              }
+              if (m.cgm) {
+                const lastN = rng.int(0, 120);
+                const span = rng.int(14, 180);
+                await cov(db, pid, C.cgm, ago(lastN + span), ago(lastN), span, span * 96, 3, rng.int(120, 190));
+              }
+              if (m.meds) {
+                const span = rng.int(180, 365 * 8);
+                await cov(db, pid, C.meds, ago(span), ago(rng.int(0, 30)), span, rng.int(1, 6), 4, null);
+              }
+              if (m.quasi) {
+                // quasi-detailed summaries for the ready-now cohort and potential study completers
+                const wearSpan = rng.int(200, 1200);
+                const first = ago(wearSpan);
+                const last = ago(rng.int(0, 2));
+                await cov(db, pid, C.hr, first, last, wearSpan, wearSpan, 3, rng.int(58, 78));
+                await cov(db, pid, C.hrv, first, last, wearSpan, wearSpan, 3, rng.int(22, 60));
+                await cov(db, pid, C.sleep, first, last, wearSpan, wearSpan, 3, Number(rng.float(5.8, 7.9).toFixed(1)));
+                await cov(db, pid, C.steps, first, last, wearSpan, wearSpan, 3, rng.int(3500, 11000));
+                await cov(db, pid, C.weight, first, last, wearSpan, Math.floor(wearSpan / 7), 3, Number(rng.float(62, 118).toFixed(1)));
+                await cov(db, pid, C.problems, ago(rng.int(365, 3650)), ago(rng.int(0, 365)), 0, m.conditions.length, 4, null);
+                await cov(db, pid, C.age, m.enrolledAt, m.enrolledAt, 0, 1, 4, DEMO_YEAR - m.birthYear);
+                await cov(db, pid, C.sex, m.enrolledAt, m.enrolledAt, 0, 1, 4, null);
+                await cov(db, pid, C.loc, m.enrolledAt, m.enrolledAt, 0, 1, 4, null);
+              }
+            }
+          });
     generated += n;
     ctx.log(`  tier ${t.tier} (${t.label}): ${n.toLocaleString('en-US')} participants`);
   }
   return { tiers, generated };
 }
 
-function cov(db: SeedCtx['graph'], pid: number, cid: number, first: string, last: string, span: number, n: number, rank: number, lastValue: number | null): void {
+async function cov(db: SeedCtx['graph'], pid: number, cid: number, first: string, last: string, span: number, n: number, rank: number, lastValue: number | null): Promise<void> {
   const verified = rank >= 2 ? n : 0;
-  db.run(S.coverage, pid, cid, first, last, span, n, rank, verified, rank === 1 ? n : 0, lastValue);
+  await db.run(S.coverage, pid, cid, first, last, span, n, rank, verified, rank === 1 ? n : 0, lastValue);
 }
 
 function buildTier(t: TierQuota, rng: SeedCtx['rng']): Member[] {

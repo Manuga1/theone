@@ -12,7 +12,7 @@ process.env.CLASSIFIER = 'rules';
 describe('ingestion API', () => {
   let t: TestDbs;
   let app: ReturnType<typeof createApp>;
-  beforeAll(() => { t = seededDbs(); app = createApp(); });
+  beforeAll(async () => { t = await seededDbs(); app = createApp(); });
   const get = (url: string) => request(app).get(`/api/participant${url}`);
   const post = (url: string, body: unknown = {}) => request(app).post(`/api/participant${url}`).send(body as object);
   const leaves = (s: ParticipantSignature) => s.domains.flatMap((d) => d.children.flatMap((g) => g.children));
@@ -73,7 +73,7 @@ describe('ingestion API', () => {
     expect(bp.filedAs).toMatchObject({ conceptSlug: 'physiology.cardiovascular.blood_pressure', valueLabel: '126/81 mmHg', newBranch: false, observedAt: '2026-10-24T08:00:00Z' });
     expect(bp.item.proposal?.classifier).toBe('rules');
     expect(bp.message).toMatch(/Filed under Physiology › Cardiovascular › Blood Pressure/);
-    const row = t.graph.get<{ value_json: string; classification_json: string }>('SELECT value_json, classification_json FROM observation WHERE id = ?', bp.item.observationId)!;
+    const row = (await t.graph.get<{ value_json: string; classification_json: string }>('SELECT value_json, classification_json FROM observation WHERE id = ?', bp.item.observationId))!;
     expect(JSON.parse(row.value_json)).toMatchObject({ systolic: 126, diastolic: 81 });
     expect(JSON.parse(row.classification_json)).toEqual({ classifier: 'rules', confidence: bp.item.proposal!.confidence, ingestItemId: bp.item.id });
 
@@ -119,7 +119,7 @@ describe('ingestion API', () => {
     expect(r.rejected[1].reason).toMatch(/GiB/);
     const mri = r.items.find((i) => i.filename === 'knee-mri-2026-10-22.zip')!;
     expect(mri).toMatchObject({ status: 'auto_filed', conceptSlug: 'imaging.mri.mri_musculoskeletal', bytes: 410_000_000 });
-    const art = t.graph.get<{ kind: string; uri: string; bytes: number }>('SELECT a.kind, a.uri, a.bytes FROM observation o JOIN artifact a ON a.id = o.artifact_id WHERE o.id = ?', mri.observationId)!;
+    const art = (await t.graph.get<{ kind: string; uri: string; bytes: number }>('SELECT a.kind, a.uri, a.bytes FROM observation o JOIN artifact a ON a.id = o.artifact_id WHERE o.id = ?', mri.observationId))!;
     expect(art).toMatchObject({ kind: 'dicom', bytes: 410_000_000 });
     expect(art.uri).toContain('knee-mri-2026-10-22.zip');
     expect(r.items.find((i) => i.filename === 'dinner.jpg')).toMatchObject({ kind: 'photo', status: 'auto_filed', conceptSlug: 'behavior.nutrition.food_log' });
@@ -174,9 +174,9 @@ describe('ingestion API', () => {
     expect(r.byConcept.map((b) => [b.conceptSlug, b.n])).toEqual(expect.arrayContaining([['physiology.cardiovascular.heart_rate', 3], ['physiology.cardiovascular.blood_pressure', 2], ['physiology.mobility.steps', 2], ['physiology.sleep.sleep_duration', 1], ['physiology.metabolic.weight', 1], ['physiology.metabolic.glucose', 1], ['behavior.nutrition.food_log', 1]]));
     expect(r.item).toMatchObject({ kind: 'apple_health', status: 'auto_filed', filename: 'export.xml', observationCount: 13 });
     expect(r.artifactId).toBeTypeOf('number');
-    const pid = alexId(t.graph);
-    expect(t.graph.get<{ n: number }>("SELECT COUNT(*) AS n FROM observation WHERE participant_id = ? AND artifact_id = ? AND provenance_class = 'connected_device' AND method = 'import'", pid, r.artifactId)!.n).toBe(13);
-    expect(t.graph.get<{ s: string }>("SELECT value_json AS s FROM observation WHERE artifact_id = ? AND value_json LIKE '%diastolic%' ORDER BY observed_at LIMIT 1", r.artifactId)!.s).toBe('{"systolic":124,"diastolic":79}');
+    const pid = await alexId(t.graph);
+    expect((await t.graph.get<{ n: number }>("SELECT COUNT(*) AS n FROM observation WHERE participant_id = ? AND artifact_id = ? AND provenance_class = 'connected_device' AND method = 'import'", pid, r.artifactId))!.n).toBe(13);
+    expect((await t.graph.get<{ s: string }>("SELECT value_json AS s FROM observation WHERE artifact_id = ? AND value_json LIKE '%diastolic%' ORDER BY observed_at LIMIT 1", r.artifactId))!.s).toBe('{"systolic":124,"diastolic":79}');
     const again = (await request(app).post('/api/participant/import/apple-health').set('Content-Type', 'text/xml').send(xml).expect(200)).body as AppleHealthImportResult;
     expect(again).toMatchObject({ records: 22, imported: 0, skipped: 13, artifactId: null });
     await post('/import/apple-health', { xml: '<html></html>' }).expect(400);
@@ -185,12 +185,12 @@ describe('ingestion API', () => {
     expect(sources.sources.find((s) => s.kind === 'apple_health')).toMatchObject({ status: 'connected', verified: true });
   });
   it('relaxation: after 200 accepted items a leaf auto-files at 0.5', async () => {
-    const pid = alexId(t.graph);
-    const weight = t.graph.get<{ id: number }>("SELECT id FROM concept WHERE slug = 'physiology.metabolic.weight'")!.id;
+    const pid = await alexId(t.graph);
+    const weight = (await t.graph.get<{ id: number }>("SELECT id FROM concept WHERE slug = 'physiology.metabolic.weight'"))!.id;
     const tie = (await post('/log', { text: 'sleep weight' })).body as QuickLogResult; // weight vs sleep duration tie → confidence 0.5 → review (asks nothing yet)
     expect(tie.status).toBe('needs_review');
     expect(tie.item.proposal).toMatchObject({ conceptSlug: 'physiology.metabolic.weight', confidence: 0.5 });
-    for (let i = 0; i < 200; i++) t.graph.run("INSERT INTO ingest_item (participant_id, kind, status, text, concept_id, observation_count, reward_cents, created_at) VALUES (?, 'quicklog', 'accepted', 'seed', ?, 1, 0, ?)", pid, weight, `2026-09-01T00:00:${String(i % 60).padStart(2, '0')}Z`);
+    for (let i = 0; i < 200; i++) await t.graph.run("INSERT INTO ingest_item (participant_id, kind, status, text, concept_id, observation_count, reward_cents, created_at) VALUES (?, 'quicklog', 'accepted', 'seed', ?, 1, 0, ?)", pid, weight, `2026-09-01T00:00:${String(i % 60).padStart(2, '0')}Z`);
     const relaxed = (await post('/log', { text: 'sleep weight 83 kg' })).body as QuickLogResult; // the unit makes it 0.67 anyway; the bare tie is now accepted at 0.5
     expect(relaxed.status).toBe('filed');
     const bare = (await post('/log', { text: 'sleep weight' })).body as QuickLogResult;

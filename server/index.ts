@@ -7,12 +7,16 @@ import { participantRouter } from './routes/participant';
 import { buyerRouter } from './routes/buyer';
 import { demoRouter } from './routes/demo';
 import { ROOT } from './db/paths';
+import { openGraph } from './db/graph';
+import { requestScope } from './db/driver';
 
 export function createApp(): express.Express {
   const app = express();
   // the Apple Health export is posted as text or { xml } and may be large (≤ 25 MB); body parsers skip a body already parsed
   app.use('/api/participant/import/apple-health', express.json({ limit: '25mb' }), express.text({ type: ['text/xml', 'application/xml', 'text/plain'], limit: '25mb' }));
   app.use(express.json({ limit: '2mb' }));
+  // the local PGlite database opens asynchronously; Supabase (DATABASE_URL / POSTGRES_URL) connects lazily
+  app.use('/api', async (_req, _res, next) => { await openGraph().then(() => requestScope.run({}, next), next); });
   app.use('/api', persona);
   app.use('/api/participant', participantRouter);
   app.use('/api/buyer', noIdentity, buyerRouter);

@@ -3,7 +3,7 @@
 The script below is what `npm run test:e2e` drives in Chromium against the full seed, so it stays green as the code
 moves: `e2e/screens.spec.ts` captures every screen at rest (desktop and a 390 px phone pass), `e2e/notes.spec.ts` and
 `e2e/stage2.spec.ts` run Part 3, `e2e/loop.spec.ts` runs Parts 4–5. Start with `npm run dev` (seeds `data/` on the first
-run, ≈ 15 s) and open <http://localhost:5173>. Every number named here is computed from `data/graph.sqlite`; none is typed
+run, ≈ 15 s) and open <http://localhost:5173>. Every number named here is computed from the database (`data/pglite` locally); none is typed
 into the client. On a phone-width window the participant app shows a top bar and a bottom nav instead of the sidebar.
 
 Fixed clock: today is **2026-10-24**. Every demo screen carries a banner: "Simulated data. Not real people. Do not enter

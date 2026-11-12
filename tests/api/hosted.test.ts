@@ -38,7 +38,7 @@ describe('hosted deployment', () => {
   beforeAll(async () => {
     for (const k of ENV_KEYS) saved[k] = process.env[k];
     setEnv({ SIMULATE_HOSTED: undefined, DEMO_ADMIN_TOKEN: undefined, HOSTED_CLASSIFIER: undefined, CLASSIFIER: 'rules', ANTHROPIC_API_KEY: undefined, ANTHROPIC_AUTH_TOKEN: undefined });
-    seededDbs();
+    await seededDbs();
     app = createApp();
     studyId = await activeStudy();
   });

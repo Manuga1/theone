@@ -52,12 +52,12 @@ describe('estimate (pure)', () => {
     expect(allocate(0, [3, 4])).toEqual([0, 0]);
     expect(allocate(4850, FULL_GROUPS.map((g) => g.recruitable)).reduce((a, b) => a + b, 0)).toBe(4850);
   });
-  it('a small pool caps contacts; collect_all puts every eligible member in a group', () => {
+  it('a small pool caps contacts; collect_all puts every eligible member in a group', async () => {
     const e = buildEstimate({ targetN: 2500, readyNow: 0, groups: [{ key: 'x', label: 'x', slugs: ['biology.genomics.exome'], eligible: 1000, recruitable: 900 }], variables: DEFAULT_CAMPAIGN_VARIABLES });
     expect(e.contacts).toBe(900);
-    const t = seededDbs();
+    const t = await seededDbs();
     const collectAll = DEFAULT_CAMPAIGN_VARIABLES.map((v) => (v.mode === 'reuse' ? v : { ...v, mode: 'collect_all' as const }));
-    const ev = evaluateCohort(DEFAULT_CRITERIA, { orgId: 1, variables: collectAll }, t.graph);
+    const ev = await evaluateCohort(DEFAULT_CRITERIA, { orgId: 1, variables: collectAll }, t.graph);
     expect(ev.groups).toHaveLength(1);
     expect(ev.groups[0].slugs).toHaveLength(3);
     expect(ev.groups[0].eligible).toBe(ev.funnel[3].n); // everyone with sufficient EHR
