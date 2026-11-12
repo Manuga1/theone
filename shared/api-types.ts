@@ -453,6 +453,8 @@ export type DemoState = {
   hosted?: boolean;
   /** which classifier files uploads and quick logs: 'claude' when an Anthropic credential is configured, else 'rules' */
   classifier?: ClassifierName;
+  /** true when reset / advance need the admin token header (hosted deployments) */
+  adminRequired?: boolean;
 };
 export type Health = { ok: boolean; ready: boolean; seeded: boolean };
 export type Ok = { ok: true; writeVersion: number };
