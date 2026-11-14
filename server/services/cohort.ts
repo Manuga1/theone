@@ -122,7 +122,7 @@ async function compute(c: CohortCriteria, opts: CohortOptions, db: Db): Promise<
   });
   if (!ready || consent.blocked) return blockedResult();
 
-  // ---- build pv: one GROUP BY pass over participant ⋈ coverage. Each distinct coverage predicate is computed once
+  // ---- build pv: one pass over participant ⋈ per-participant coverage. Each distinct coverage predicate is computed once
   // as MAX(CASE …) (aliases x0..xn); the outer SELECT maps them onto the m/v/h/a/lab flag names the aggregates use.
   const params: (number | string)[] = [];
   const wanted = new Set<number>();
@@ -183,15 +183,22 @@ async function compute(c: CohortCriteria, opts: CohortOptions, db: Db): Promise<
   if (d.sex && d.sex !== 'any') { params.push(d.sex); where.push('p.sex = ?'); }
   if (c.requireRecontact) where.push('cs.recontact_opt_in = 1 AND COALESCE(cs.vault_only, 0) = 0');
 
-  // One GROUP BY pass over participant ⋈ consent ⋈ (the wanted) coverage rows. Every flag is a boolean column.
+  // One row per demographic match (participant ⋈ consent, both 1:1). The coverage flags are aggregated per participant
+  // in a LATERAL subquery, so only the matched participants' (wanted) coverage rows are read, through the
+  // (participant_id, concept_id) primary key, instead of merge-joining the whole coverage table and grouping the result.
+  // A participant with no wanted coverage rows aggregates to NULL, hence the COALESCE to FALSE. Every flag is a boolean.
   // Vault-only participants (2026-11-10 notes) are never recontactable: they drop out of every consent-gated figure.
+  const aliases = Array.from(aliasOf.values());
+  const coverage = exprs.length
+    ? `LEFT JOIN LATERAL (SELECT ${exprs.join(', ')}
+        FROM participant_coverage cv WHERE cv.participant_id = p.id AND cv.n_obs > 0 AND cv.concept_id IN (${inList.map(() => '?').join(', ')})) cvf ON TRUE`
+    : '';
   const inner = `SELECT p.id AS pid, ${VAULT_AWARE_RECONTACT} AS recontact, COALESCE(cs.commercial_ok, 1) AS commercial, COALESCE(cs.excluded_categories_json, '[]') AS excl,
-      ${condExprs.length ? `(${condExprs.join(' AND ')})` : 'TRUE'} AS cond_ok, ${openOpp} AS open_opp${exprs.length ? ', ' + exprs.join(', ') : ''}
+      ${condExprs.length ? `(${condExprs.join(' AND ')})` : 'TRUE'} AS cond_ok, ${openOpp} AS open_opp${aliases.map((a) => `, COALESCE(cvf.${a}, FALSE) AS ${a}`).join('')}
     FROM participant p
     LEFT JOIN consent_setting cs ON cs.participant_id = p.id
-    LEFT JOIN participant_coverage cv ON cv.participant_id = p.id AND cv.n_obs > 0 AND cv.concept_id IN (${inList.map(() => '?').join(', ') || 'NULL'})
-    ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-    GROUP BY p.id, cs.participant_id`;
+    ${coverage}
+    ${where.length ? 'WHERE ' + where.join(' AND ') : ''}`;
   const baseExpr = ['cond_ok', ...labAliases].join(' AND ');
   const sel = `SELECT pid, recontact, commercial, excl, open_opp, (${baseExpr}) AS base${outer.length ? ', ' + outer.join(', ') : ''} FROM (${inner}) t`;
   // pv lives for the enclosing transaction only (compute always runs inside one: see evaluateCohort), so it works the
