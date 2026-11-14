@@ -2,7 +2,9 @@
 
 Two forms, each writing to its own restricted sheet. The site embeds them from two web addresses you set in Vercel. Padma's own software stores no answers.
 
-Time needed: about 15 minutes per form, plus 10 minutes for the settings and the test.
+Time needed: about 3 minutes with the script below, or about 15 minutes per form by hand, plus 10 minutes for the settings and the test.
+
+**Fastest way: run `create-forms.gs` once.** After steps 1–3 of "Before you start", open script.google.com in the Padma account, paste `docs/gtm/create-forms.gs`, fill in the contact address (and the second person, if decided), and run `createPadmaForms`. It builds both forms below exactly as listed, links each to its own private sheet with the extra registry columns, switches off everything the settings sections say to switch off, and prints the two embed addresses for Vercel. Running it twice is refused. Then skip to "Settings in Vercel". Still do steps 4 and 7 of the set-up steps by hand: check each sheet's sharing shows only the two named people, and open each embed address in a private window.
 
 **No health fields. Not one.** Do not add a question about conditions, medicines, diagnoses, weight, pregnancy, mental health or which disease someone wants to help with. Even "which conditions interest you" counts as health information in some states.
 

@@ -20,7 +20,7 @@ Padma is a student project in pilot stage. It has no enrolled participants yet. 
 | | Disclose Padma to your PI in writing | `outreach-templates.md`, B4 |
 | | Draft 25 warm asks (15 Maanas, 10 Akash) | `outreach-templates.md`, B1–B3 |
 | | Buy the domain only after the name check clears | `plan.md` |
-| **Sat 14 – Sun 15 Nov** | Create the two hosted forms and set the site settings | `form-fields.md` |
+| **Sat 14 – Sun 15 Nov** | Create the two hosted forms (one script run) and set the site settings | `create-forms.gs`, `form-fields.md` |
 | | Read the notice and the landing copy aloud; correct them | `registry-notice.md` |
 | | Personalise 20 academic and 20 startup interview requests | `outreach-templates.md`, A1–A7; targets in `targets.csv` |
 | | Set up the tracker | `tracker-template.csv`, `interview-guide.md` |
@@ -66,6 +66,7 @@ Padma is a student project in pilot stage. It has no enrolled participants yet. 
 | `letter-of-intent.md` | Short non-binding letter. Draft for legal review |
 | `registry-notice.md` | The registry privacy notice and joining terms. Draft for legal review |
 | `form-fields.md` | Exact fields for the two hosted forms, set-up, Vercel settings, five-step test |
+| `create-forms.gs` | Google Apps Script that builds both forms and their private sheets in one run, and prints the embed addresses |
 | `questions-for-counsel.md` | Questions for a lawyer, the ethics office and a purchasing administrator |
 | `guardrails.md` | Stages 0–3, conflicts, campus rules, never-say list, money rule, and what must be true before any real health data |
 | `founders-dry-run.md` | The 14-day protocol you run on yourselves |
